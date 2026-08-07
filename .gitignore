@@ -1,0 +1,26 @@
+# Virtual Environment
+backend/.venv/
+backend/__pycache__/
+backend/*.pyc
+
+# Local Database & Feedback Logs
+backend/similarity_feedback_log.jsonl
+
+# Local Excel Test Files (Generated at runtime)
+backend/test_reference.xlsx
+backend/test_useful.xlsx
+backend/test_anomaly.xlsx
+
+# Node Dependencies & Build Output
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+
+# Windows System Files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
