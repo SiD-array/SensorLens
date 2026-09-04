@@ -9,6 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import similarity
+from app.services.alignment import match_columns_lexical
+from app.api.endpoints.baseline import router as baseline_router
 
 app = FastAPI(title="SensorLens API")
 
@@ -20,6 +22,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount baseline and alignment endpoints
+app.include_router(baseline_router, prefix="/api")
 
 # Global in-memory cache to store uploaded datasets during session
 # key: file_id -> { "name": str, "df": pd.DataFrame, "metadata": dict }
@@ -52,21 +57,23 @@ class WorkspaceState(BaseModel):
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
     """
-    Ingests an Excel file (.xlsx). Validates its structure and extracts columns,
-    metadata, and a downsampled sparkline array for each sensor.
+    Ingests an Excel (.xlsx, .xls) or CSV (.csv) file. Validates its structure
+    and extracts columns, metadata, and downsampled sparkline array for each sensor.
     """
-    if not file.filename.endswith(('.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail="Only Excel files (.xlsx, .xls) are supported.")
+    filename_lower = file.filename.lower()
+    if not (filename_lower.endswith(('.xlsx', '.xls', '.csv'))):
+        raise HTTPException(status_code=400, detail="Only Excel (.xlsx, .xls) and CSV (.csv) files are supported.")
     
     file_id = str(uuid.uuid4())
     
     try:
-        # Load excel file
-        # Read the first sheet by default
-        df = pd.read_excel(file.file)
+        if filename_lower.endswith('.csv'):
+            df = pd.read_csv(file.file)
+        else:
+            df = pd.read_excel(file.file)
         
         if df.empty:
-            raise HTTPException(status_code=400, detail=f"The uploaded Excel sheet '{file.filename}' is empty.")
+            raise HTTPException(status_code=400, detail=f"The uploaded file '{file.filename}' is empty.")
         
         # Clean columns (convert to string and strip)
         df.columns = [str(col).strip() for col in df.columns]
@@ -142,10 +149,16 @@ async def upload_file(file: UploadFile = File(...)):
 @app.post("/api/suggest-mapping")
 async def suggest_mapping_endpoint(req: MappingRequest):
     """
-    Computes name similarity auto-suggestions for mapping.
+    Computes deterministic lexical auto-suggestions for mapping (Stage 1).
+    Strikes delimiters, engineering units, and applies Levenshtein threshold.
     """
-    suggestions = similarity.suggest_mappings(req.ref_cols, req.test_cols)
-    return {"suggestions": suggestions}
+    lex_result = match_columns_lexical(req.ref_cols, req.test_cols, threshold=0.85)
+    return {
+        "suggestions": lex_result["mapping_dict"],
+        "matches": lex_result["matches"],
+        "unassigned_ref": lex_result["unassigned_ref"],
+        "unassigned_test": lex_result["unassigned_test"]
+    }
 
 @app.post("/api/analyze")
 async def analyze_similarity(req: AnalyzeRequest):

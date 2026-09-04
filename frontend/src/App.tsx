@@ -1,10 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { 
-  Upload, FileText, Settings, Activity, CheckCircle, 
-  AlertTriangle, Trash2, Download, UploadCloud, ThumbsUp, 
-  ThumbsDown, Play, Info, ArrowRight, Eye, RefreshCw, X, Check
+  Upload, Settings, Activity, Trash2, Download, 
+  UploadCloud, ThumbsUp, ThumbsDown, Play, Info, 
+  RefreshCw, X, Check, Lightbulb
 } from 'lucide-react';
+import { VisualReportView } from './components/VisualReport/VisualReportView';
+import { ColumnAlignmentView } from './components/ColumnAlignment/ColumnAlignmentView';
+import { BaselineEngineView } from './components/Baseline/BaselineEngineView';
+
 
 interface SensorColumn {
   name: string;
@@ -60,12 +64,10 @@ export default function App() {
   const [similarityResults, setSimilarityResults] = useState<Record<string, SimilarityResult>>({});
   const [selectedResultCol, setSelectedResultCol] = useState<string>('');
   
-  // Charting selection
-  const [chartType, setChartType] = useState<'line' | 'scatter' | 'bar'>('line');
-  const [selectedPlotCols, setSelectedPlotCols] = useState<Array<{ fileId: string; colName: string }>>([]);
+  const [selectedPlotCols, setSelectedPlotCols] = useState<Array<{ fileId: string; colName: string; fileName?: string }>>([]);
   
   // UI Panels / Views
-  const [activeView, setActiveView] = useState<'dashboard' | 'visualizer' | 'compare'>('dashboard');
+  const [activeView, setActiveView] = useState<'dashboard' | 'visualizer' | 'alignment' | 'baseline' | 'compare'>('dashboard');
   const [isUploading, setIsUploading] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -81,8 +83,7 @@ export default function App() {
     apiKey: ''
   });
   
-  // Saved Reports History
-  const [savedReports, setSavedReports] = useState<any[]>([]);
+  // Settings Config
   
   // User feedback on AI reports
   const [feedbacks, setFeedbacks] = useState<Record<string, { verdict: string; comment: string }>>({});
@@ -475,62 +476,7 @@ export default function App() {
     if (workspaceInputRef.current) workspaceInputRef.current.value = '';
   };
 
-  // ECharts Configurations
-  const getVisualizerChartOption = () => {
-    const seriesList: any[] = [];
-    const legendNames: string[] = [];
 
-    selectedPlotCols.forEach(plot => {
-      const file = files.find(f => f.id === plot.fileId);
-      const col = file?.columns.find(c => c.name === plot.colName);
-      if (!file || !col) return;
-
-      const seriesName = `${col.name} (${file.name})`;
-      legendNames.push(seriesName);
-
-      // Create dummy/reconstructed x values or use indices
-      const dataPoints = col.sparkline.map((val, idx) => [idx, val]);
-
-      seriesList.push({
-        name: seriesName,
-        type: chartType,
-        data: dataPoints,
-        smooth: true,
-        emphasis: { focus: 'series' } // Hover highlight behavior!
-      });
-    });
-
-    return {
-      backgroundColor: 'transparent',
-      tooltip: {
-        trigger: 'axis',
-        axisPointer: { type: 'cross' }
-      },
-      legend: {
-        data: legendNames,
-        textStyle: { color: '#ccc' },
-        selectedMode: true
-      },
-      grid: { left: '3%', right: '4%', bottom: '15%', containLabel: true },
-      dataZoom: [
-        { type: 'slider', show: true, textStyle: { color: '#aaa' } },
-        { type: 'inside' }
-      ],
-      xAxis: {
-        type: 'value',
-        name: 'Time Index',
-        axisLabel: { color: '#aaa' },
-        splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.05)' } }
-      },
-      yAxis: {
-        type: 'value',
-        name: 'Value',
-        axisLabel: { color: '#aaa' },
-        splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.05)' } }
-      },
-      series: seriesList
-    };
-  };
 
   const getComparisonChartOption = (colName: string) => {
     const result = similarityResults[colName];
@@ -619,13 +565,25 @@ export default function App() {
               if (selectedPlotCols.length === 0 && files.length > 0) {
                 const firstF = files[0];
                 if (firstF && firstF.columns[0]) {
-                  setSelectedPlotCols([{ fileId: firstF.id, colName: firstF.columns[0].name }]);
+                  setSelectedPlotCols([{ fileId: firstF.id, colName: firstF.columns[0].name, fileName: firstF.name }]);
                 }
               }
             }}
             className={`toggle-btn ${activeView === 'visualizer' ? 'active' : ''}`}
           >
             Visual Report
+          </button>
+          <button 
+            onClick={() => setActiveView('alignment')}
+            className={`toggle-btn ${activeView === 'alignment' ? 'active' : ''}`}
+          >
+            Column Alignment
+          </button>
+          <button 
+            onClick={() => setActiveView('baseline')}
+            className={`toggle-btn ${activeView === 'baseline' ? 'active' : ''}`}
+          >
+            Baseline Engine
           </button>
           <button 
             onClick={() => setActiveView('compare')}
@@ -931,6 +889,43 @@ export default function App() {
               </div>
 
               <div className="panel-body">
+                {/* Visual Roadmap & Baseline Engine Explainer Banner */}
+                <div className="dashboard-roadmap-banner">
+                  <div className="roadmap-title-row">
+                    <div className="roadmap-title-left">
+                      <Lightbulb size={16} className="text-accent-cyan" />
+                      <span className="roadmap-title">System Architecture: How the 3 Engines Connect</span>
+                    </div>
+                    <span className="roadmap-badge">BSH Engineering Guide</span>
+                  </div>
+
+                  <div className="roadmap-steps-grid">
+                    <div className="roadmap-step">
+                      <span className="step-tag">Step 1: Dashboard</span>
+                      <h4 className="step-heading">Tag Ref vs Test</h4>
+                      <p className="step-desc">
+                        Mark your known-good cycle as <b>Ref</b> (Golden Reference) and the run you want to diagnose as <b>Test</b>.
+                      </p>
+                    </div>
+
+                    <div className="roadmap-step">
+                      <span className="step-tag">Step 2: Visual & Alignment</span>
+                      <h4 className="step-heading">Plot & Align Channels</h4>
+                      <p className="step-desc">
+                        Inspect curves side-by-side. Use <b>Column Alignment</b> to auto-pair mismatched sensor names.
+                      </p>
+                    </div>
+
+                    <div className="roadmap-step highlight">
+                      <span className="step-tag highlight">Step 3: Baseline Engine</span>
+                      <h4 className="step-heading">Multi-Run Guardrails</h4>
+                      <p className="step-desc">
+                        Merge <i>multiple</i> reference runs into an averaged <b>Golden Standard</b>. Shaded tolerance corridors flag defects in <b>bright red</b>!
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Active Selection Info */}
                 <div className="overview-top-bar">
                   <div className="overview-selected-info">
@@ -1014,102 +1009,40 @@ export default function App() {
           </div>
         )}
 
-        {/* VIEW 2: VISUAL REPORT */}
+        {/* VIEW 2: VISUAL REPORT (FEATURE 1 UPGRADE) */}
         {activeView === 'visualizer' && (
-          <div className="visualizer-layout">
-            
-            {/* Left Filter Control Column */}
-            <div className="glass-panel">
-              <div className="panel-header" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '4px' }}>
-                <h2>Channels List</h2>
-                <p style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
-                  Check boxes to overlay and compare multiple sensor curves on the main chart area.
-                </p>
-              </div>
-              
-              <div className="panel-body">
-                <div style={{ marginBottom: '16px' }}>
-                  <span className="draggable-pool-title" style={{ display: 'block', marginBottom: '6px' }}>Graph Type</span>
-                  <div className="view-toggles" style={{ width: '100%' }}>
-                    {(['line', 'scatter', 'bar'] as const).map(t => (
-                      <button 
-                        key={t}
-                        onClick={() => setChartType(t)}
-                        className="toggle-btn"
-                        style={{ flex: 1, padding: '4px', textTransform: 'capitalize' }}
-                      >
-                        {t}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+          <VisualReportView
+            files={files}
+            selectedPlotCols={selectedPlotCols}
+            onChangeSelectedPlotCols={setSelectedPlotCols}
+          />
+        )}
 
-                <span className="draggable-pool-title" style={{ display: 'block', marginBottom: '8px' }}>Select Channels</span>
-                <div className="channel-selector-list">
-                  {files.map(file => (
-                    <div key={file.id} className="file-group">
-                      <span className="file-group-title" title={file.name}>
-                        {file.name} ({file.tag.toUpperCase()})
-                      </span>
-                      <div className="channel-checkbox-group">
-                        {file.columns.filter(c => c.type === 'numeric').map(col => {
-                          const isSelected = selectedPlotCols.some(p => p.fileId === file.id && p.colName === col.name);
-                          return (
-                            <label key={col.name} className="checkbox-label">
-                              <input 
-                                type="checkbox"
-                                checked={isSelected}
-                                onChange={() => togglePlotColumn(file.id, col.name)}
-                              />
-                              <span className="truncate">{col.name}</span>
-                            </label>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
+        {/* VIEW 3: COLUMN ALIGNMENT (FEATURE 2 UPGRADE) */}
+        {activeView === 'alignment' && (
+          <ColumnAlignmentView
+            files={files}
+            activeRefId={activeRefId}
+            activeTestId={activeTestId}
+            onSelectRefId={(id) => {
+              setActiveRefId(id);
+              updateTag(id, 'reference');
+            }}
+            onSelectTestId={setActiveTestId}
+            mappings={mappings}
+            setMappings={setMappings}
+            onRunSimilarityEngine={() => {
+              setActiveView('compare');
+              runAnalysis();
+            }}
+          />
+        )}
 
-            {/* Right Large ECharts canvas */}
-            <div className="glass-panel">
-              <div className="panel-header">
-                <div>
-                  <h2 style={{ fontSize: '1rem', color: '#fff' }}>Interactive Graph Analysis</h2>
-                  <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                    Plot sensor signals side-by-side. Drag the bottom slider to zoom, and hover over legend items to focus a single curve.
-                  </p>
-                </div>
-                {selectedPlotCols.length > 0 && (
-                  <button 
-                    onClick={() => setSelectedPlotCols([])}
-                    className="btn"
-                  >
-                    Clear Plot ({selectedPlotCols.length})
-                  </button>
-                )}
-              </div>
-
-              <div className="panel-body" style={{ display: 'flex', flexDirection: 'column' }}>
-                {selectedPlotCols.length > 0 ? (
-                  <div className="chart-wrapper-large">
-                    <ReactECharts
-                      option={getVisualizerChartOption()}
-                      style={{ height: '100%', width: '100%' }}
-                      theme="dark"
-                    />
-                  </div>
-                ) : (
-                  <div className="chart-empty-state">
-                    <Activity size={32} />
-                    <span>Select sensor channels on the left to display them here.</span>
-                  </div>
-                )}
-              </div>
-            </div>
-
-          </div>
+        {/* VIEW 4: BASELINE ENGINE (FEATURE 3 UPGRADE) */}
+        {activeView === 'baseline' && (
+          <BaselineEngineView
+            files={files}
+          />
         )}
 
         {/* VIEW 3: SIMILARITY COMPARISON */}

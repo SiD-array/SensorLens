@@ -7,6 +7,7 @@ backend/*.pyc
 backend/similarity_feedback_log.jsonl
 
 # Local Excel Test Files (Generated at runtime)
+*.xlsx
 backend/test_reference.xlsx
 backend/test_useful.xlsx
 backend/test_anomaly.xlsx
