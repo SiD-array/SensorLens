@@ -8,6 +8,12 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+import starlette.formparsers
+# Increase multipart parser field and spool limits from 1MB to 100MB
+# so large baseline profile JSON payloads and high-channel files are never restricted
+starlette.formparsers.MultiPartParser.max_part_size = 100 * 1024 * 1024  # 100MB
+starlette.formparsers.MultiPartParser.spool_max_size = 100 * 1024 * 1024 # 100MB
+
 import similarity
 from app.services.alignment import match_columns_lexical
 from app.api.endpoints.baseline import router as baseline_router

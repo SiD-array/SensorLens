@@ -1973,7 +1973,28 @@ h1, h2, h3, h4 {
 
 .alignment-header-actions {
   display: flex;
+  align-items: center;
   gap: 10px;
+}
+
+.btn-manage-cats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  padding: 7px 12px;
+  border-radius: 6px;
+  background: rgba(0, 242, 254, 0.08);
+  border: 1px solid rgba(0, 242, 254, 0.3);
+  color: #e0f2fe;
+  transition: all 0.2s;
+}
+
+.btn-manage-cats:hover {
+  background: rgba(0, 242, 254, 0.16);
+  border-color: var(--accent-cyan);
+  color: #fff;
 }
 
 .alignment-selectors-bar {
@@ -2099,6 +2120,15 @@ h1, h2, h3, h4 {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.slot-cat-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+  box-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
 }
 
 .slot-index {
@@ -2247,6 +2277,8 @@ h1, h2, h3, h4 {
   padding: 2px 4px;
   cursor: pointer;
   outline: none;
+  max-width: 100px;
+  text-overflow: ellipsis;
 }
 
 .card-swap-select:hover {
@@ -2320,6 +2352,47 @@ h1, h2, h3, h4 {
 }
 
 /* Unassigned Channels Bank */
+/* Bank Header & Category Filter */
+.bank-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.25);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.bank-category-select {
+  flex: 1;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: #fff;
+  padding: 4px 8px;
+  font-size: 0.74rem;
+  outline: none;
+  cursor: pointer;
+}
+
+.bank-category-select:hover {
+  border-color: var(--accent-cyan);
+}
+
+.count-pill {
+  font-size: 0.68rem;
+  padding: 2px 7px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.count-pill.highlight {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+
 .unassigned-bank-body {
   flex: 1;
   overflow-y: auto;
@@ -2372,6 +2445,10 @@ h1, h2, h3, h4 {
   font-size: 0.78rem;
   font-weight: 500;
   color: #f3f4f6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 145px;
 }
 
 .bank-card-hint {
@@ -2385,8 +2462,33 @@ h1, h2, h3, h4 {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  color: var(--text-muted);
+  gap: 12px;
+  background: var(--bg-card);
+  border: 1px dashed var(--border-color);
+  border-radius: 12px;
+  padding: 40px 24px;
+  text-align: center;
+  margin: 8px 0;
+  backdrop-filter: blur(12px);
+}
+
+.alignment-placeholder h3 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #fff;
+  margin: 0;
+}
+
+.alignment-placeholder p {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  max-width: 480px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.placeholder-quick-actions {
+  margin-top: 8px;
 }
 
 /* ========================================================== */

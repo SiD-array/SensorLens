@@ -307,8 +307,8 @@ export const ColumnAlignmentView: React.FC<ColumnAlignmentViewProps> = ({
         <div className="alignment-header-left">
           <h2>Two-Stage Interactive Column Alignment</h2>
           <p className="alignment-header-desc">
-            Stage 1 uses deterministic lexical rules (casing, engineering unit stripping, Levenshtein $\ge$ 0.85).
-            Stage 2 lets you drag unassigned test sensors into slots with real-time Pearson $r$ & DTW scoring.
+            Stage 1 uses deterministic lexical rules (casing, engineering unit stripping, Levenshtein ≥ 0.85).
+            Stage 2 lets you drag unassigned test sensors into slots with real-time Pearson <i>r</i> & DTW scoring.
           </p>
         </div>
 
@@ -321,6 +321,22 @@ export const ColumnAlignmentView: React.FC<ColumnAlignmentViewProps> = ({
             <Folder size={14} className="text-accent-cyan" />
             <span>Manage Categories ({buckets.length})</span>
           </button>
+
+          {Object.values(mappings).some(Boolean) && (
+            <button 
+              onClick={() => {
+                setMappings({});
+                if (testFile) {
+                  setUnassignedPool(testFile.columns.map(c => c.name));
+                }
+              }}
+              className="btn btn-secondary"
+              title="Reset all current column pairings"
+            >
+              <X size={13} />
+              <span>Reset Mappings</span>
+            </button>
+          )}
 
           <button 
             onClick={runDeterministicLexicalMatch}
@@ -668,9 +684,43 @@ export const ColumnAlignmentView: React.FC<ColumnAlignmentViewProps> = ({
         </DragDropContext>
       ) : (
         <div className="alignment-placeholder">
-          <HelpCircle size={36} className="text-muted" />
-          <h3>Please select both a Reference Run and a Test Run above</h3>
-          <p>The Two-Stage Alignment workspace will align their schemas.</p>
+          <HelpCircle size={44} className="text-accent-cyan" style={{ opacity: 0.8 }} />
+          {files.length === 0 ? (
+            <>
+              <h3>No Sensor Logs Uploaded Yet</h3>
+              <p>
+                Navigate to the <b>Dashboard</b> tab and upload your reference and test runs (.xlsx or .csv) to begin schema alignment.
+              </p>
+            </>
+          ) : files.length === 1 ? (
+            <>
+              <h3>Only 1 Run Ingested</h3>
+              <p>
+                Two-stage column alignment requires at least two runs (one <b>Reference</b> and one <b>Test</b>). Upload another test run to compare sensor mappings.
+              </p>
+            </>
+          ) : (
+            <>
+              <h3>Select Reference & Test Runs Above</h3>
+              <p>
+                Choose a <b>Reference Run</b> and a <b>Test Run</b> from the selector bar to map channel names across both logs.
+              </p>
+              {(!activeRefId || !activeTestId) && files.length >= 2 && (
+                <div className="placeholder-quick-actions">
+                  <button 
+                    onClick={() => {
+                      if (!activeRefId && files[0]) onSelectRefId(files[0].id);
+                      if (!activeTestId && files[1]) onSelectTestId(files[1].id);
+                    }}
+                    className="btn btn-primary"
+                    style={{ fontSize: '0.78rem', padding: '7px 14px' }}
+                  >
+                    Auto-Select "{files[0]?.name}" (Ref) & "{files[1]?.name}" (Test)
+                  </button>
+                </div>
+              )}
+            </>
+          )}
         </div>
       )}
 

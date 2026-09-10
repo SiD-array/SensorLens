@@ -1018,8 +1018,8 @@ export default function App() {
           />
         )}
 
-        {/* VIEW 3: COLUMN ALIGNMENT (FEATURE 2 UPGRADE) */}
-        {activeView === 'alignment' && (
+        {/* VIEW 3: COLUMN ALIGNMENT (FEATURE 2 UPGRADE - PRESERVED STATE) */}
+        <div style={{ display: activeView === 'alignment' ? 'flex' : 'none', flex: 1, minHeight: 0, height: '100%', width: '100%', flexDirection: 'column' }}>
           <ColumnAlignmentView
             files={files}
             activeRefId={activeRefId}
@@ -1036,7 +1036,7 @@ export default function App() {
               runAnalysis();
             }}
           />
-        )}
+        </div>
 
         {/* VIEW 4: BASELINE ENGINE (FEATURE 3 UPGRADE - PRESERVED STATE) */}
         <div style={{ display: activeView === 'baseline' ? 'flex' : 'none', flex: 1, minHeight: 0, height: '100%', width: '100%', flexDirection: 'column' }}>

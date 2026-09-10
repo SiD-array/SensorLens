@@ -167,6 +167,7 @@ async def evaluate_baseline_endpoint(
     target_col: str = Form("FMC%"),
     k_sigma: float = Form(2.0),
     pct_margin: Optional[float] = Form(None),
+    baseline_profile_file: Optional[UploadFile] = File(None),
     baseline_profile_json: Optional[str] = Form(None),
     mappings_json: Optional[str] = Form(None)
 ):
@@ -175,7 +176,15 @@ async def evaluate_baseline_endpoint(
     Computes Corridor Violation %, Cumulative Absolute Deviation,
     and Pearson Slope Correlation. Supports column mappings from Column Alignment.
     """
-    if baseline_profile_json:
+    baseline_profile = None
+    if baseline_profile_file:
+        try:
+            content = await baseline_profile_file.read()
+            baseline_profile = json.loads(content.decode("utf-8"))
+            current_baseline_cache["active"] = baseline_profile
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid baseline_profile file: {str(e)}")
+    elif baseline_profile_json:
         try:
             baseline_profile = json.loads(baseline_profile_json)
             current_baseline_cache["active"] = baseline_profile
