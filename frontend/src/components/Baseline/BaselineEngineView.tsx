@@ -226,9 +226,10 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
       if (pctMargin > 0) {
         formData.append('pct_margin', pctMargin.toString());
       }
-      formData.append('baseline_profile_json', JSON.stringify(baselineProfile));
-      const profileBlob = new Blob([JSON.stringify(baselineProfile)], { type: 'application/json' });
-      formData.append('baseline_profile_file', profileBlob, 'baseline_profile.json');
+      if (baselineProfile) {
+        const profileBlob = new Blob([JSON.stringify(baselineProfile)], { type: 'application/json' });
+        formData.append('baseline_profile_file', profileBlob, 'baseline_profile.json');
+      }
       if (mappings && Object.keys(mappings).length > 0) {
         formData.append('mappings_json', JSON.stringify(mappings));
       }

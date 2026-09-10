@@ -9,10 +9,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import starlette.formparsers
+import starlette.requests
 # Increase multipart parser field and spool limits from 1MB to 100MB
-# so large baseline profile JSON payloads and high-channel files are never restricted
+# so large baseline profile payloads and high-channel files are never restricted
 starlette.formparsers.MultiPartParser.max_part_size = 100 * 1024 * 1024  # 100MB
 starlette.formparsers.MultiPartParser.spool_max_size = 100 * 1024 * 1024 # 100MB
+if hasattr(starlette.requests.Request.form, "__kwdefaults__") and starlette.requests.Request.form.__kwdefaults__:
+    starlette.requests.Request.form.__kwdefaults__["max_part_size"] = 100 * 1024 * 1024
 
 import similarity
 from app.services.alignment import match_columns_lexical
