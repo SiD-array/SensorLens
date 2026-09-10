@@ -319,7 +319,8 @@ def evaluate_test_run_corridor(
     baseline_profile: Dict[str, Any],
     target_col: str = "FMC%",
     k_sigma: float = 2.0,
-    pct_margin: Optional[float] = None
+    pct_margin: Optional[float] = None,
+    mappings: Optional[Dict[str, str]] = None
 ) -> Dict[str, Any]:
     """
     Evaluates a test run against the generated baseline profile:
@@ -332,6 +333,8 @@ def evaluate_test_run_corridor(
        - Cumulative Absolute Deviation: Area outside corridor.
        - Pearson Slope Correlation: Rate-of-change trajectory agreement.
     5. Marks violating intervals for UI red highlights.
+    6. Seamlessly handles test runs with fewer or more channels, using
+       column mappings and lexical matching to bridge naming differences.
     """
     direction = baseline_profile.get("direction", "downward")
     grid = np.array(baseline_profile.get("grid", np.linspace(100.0, 0.0, 500)))
@@ -348,7 +351,7 @@ def evaluate_test_run_corridor(
     if not matched_target:
         return {
             "success": False,
-            "error": f"Target progress variable '{target_col}' not found in test file '{test_file_name}'."
+            "error": f"Target progress variable '{target_col}' not found in test file '{test_file_name}'. Please verify the Cycle Progress Sensor name in the sidebar."
         }
 
     test_progress_raw = pd.to_numeric(test_df[matched_target], errors="coerce").dropna().values
@@ -363,16 +366,48 @@ def evaluate_test_run_corridor(
         }
 
     results = {}
+    matched_channels = []
+    missing_channels = []
+    matched_test_cols = set()
 
     for c, base_info in baseline_channels.items():
-        # Check if test run has matching channel
         matched_test_col = None
-        for tc in test_df.columns:
-            if tc.lower().strip() == c.lower().strip():
-                matched_test_col = tc
-                break
-        
+
+        # Priority 1: User-defined mappings from Column Alignment
+        if mappings and c in mappings and mappings[c]:
+            candidate = mappings[c]
+            if candidate in test_df.columns:
+                matched_test_col = candidate
+
+        # Priority 2: Case-insensitive exact match
         if not matched_test_col:
+            for tc in test_df.columns:
+                if tc.lower().strip() == c.lower().strip():
+                    matched_test_col = tc
+                    break
+
+        # Priority 3: Lexical / Token matching (stripping units or high similarity)
+        if not matched_test_col:
+            from app.services.alignment import clean_and_tokenize, string_similarity_score
+            c_clean, _ = clean_and_tokenize(c)
+            best_score = 0.0
+            best_candidate = None
+            for tc in test_df.columns:
+                if tc == matched_target:
+                    continue
+                tc_clean, _ = clean_and_tokenize(tc)
+                if c_clean and c_clean == tc_clean:
+                    best_candidate = tc
+                    break
+                sim = string_similarity_score(c, tc)
+                if sim >= 0.80 and sim > best_score:
+                    best_score = sim
+                    best_candidate = tc
+            if best_candidate:
+                matched_test_col = best_candidate
+
+        if not matched_test_col:
+            missing_channels.append(c)
             continue
 
         raw_c_vals = pd.to_numeric(test_df[matched_test_col], errors="coerce").values
@@ -426,6 +461,7 @@ def evaluate_test_run_corridor(
 
         results[c] = {
             "channel_name": c,
+            "matched_test_col": matched_test_col,
             "violation_pct": violation_pct,
             "cumulative_deviation": cumulative_abs_deviation,
             "slope_correlation": round(slope_corr, 4),
@@ -435,6 +471,23 @@ def evaluate_test_run_corridor(
             "lower_corridor": lower_bound.tolist(),
             "violating_mask": violating_mask.tolist()
         }
+        matched_channels.append(c)
+        matched_test_cols.add(matched_test_col)
+
+    extra_test_channels = [
+        tc for tc in test_df.columns 
+        if tc != matched_target and tc not in matched_test_cols
+    ]
+
+    if not results:
+        return {
+            "success": False,
+            "error": f"No matching sensor channels found between the baseline ({len(baseline_channels)} channels) and test file '{test_file_name}' ({len(test_df.columns)} channels). Map columns in the Column Alignment tab or check sensor names.",
+            "test_file_name": test_file_name,
+            "matched_channels": [],
+            "missing_channels": list(baseline_channels.keys()),
+            "extra_test_channels": extra_test_channels
+        }
 
     return {
         "success": True,
@@ -443,5 +496,8 @@ def evaluate_test_run_corridor(
         "k_sigma": k_sigma,
         "pct_margin": pct_margin,
         "grid": grid.tolist(),
-        "channel_evaluations": results
+        "channel_evaluations": results,
+        "matched_channels": matched_channels,
+        "missing_channels": missing_channels,
+        "extra_test_channels": extra_test_channels
     }

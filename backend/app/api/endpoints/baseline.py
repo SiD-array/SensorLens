@@ -167,12 +167,13 @@ async def evaluate_baseline_endpoint(
     target_col: str = Form("FMC%"),
     k_sigma: float = Form(2.0),
     pct_margin: Optional[float] = Form(None),
-    baseline_profile_json: Optional[str] = Form(None)
+    baseline_profile_json: Optional[str] = Form(None),
+    mappings_json: Optional[str] = Form(None)
 ):
     """
     Evaluates a test run against the active baseline profile.
     Computes Corridor Violation %, Cumulative Absolute Deviation,
-    and Pearson Slope Correlation.
+    and Pearson Slope Correlation. Supports column mappings from Column Alignment.
     """
     if baseline_profile_json:
         try:
@@ -184,6 +185,13 @@ async def evaluate_baseline_endpoint(
         baseline_profile = current_baseline_cache["active"]
     else:
         raise HTTPException(status_code=400, detail="No active multi-reference baseline built yet. Build baseline first.")
+
+    mappings = None
+    if mappings_json:
+        try:
+            mappings = json.loads(mappings_json)
+        except Exception:
+            mappings = None
 
     test_df = None
     file_name = "Test_Run"
@@ -212,7 +220,11 @@ async def evaluate_baseline_endpoint(
         baseline_profile=baseline_profile,
         target_col=target_col,
         k_sigma=k_sigma,
-        pct_margin=pct_margin
+        pct_margin=pct_margin,
+        mappings=mappings
     )
+
+    if not eval_result.get("success", False):
+        raise HTTPException(status_code=400, detail=eval_result.get("error", "Evaluation failed"))
 
     return eval_result

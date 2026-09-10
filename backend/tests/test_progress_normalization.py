@@ -81,3 +81,53 @@ def test_corridor_evaluation_metrics():
     assert eval_bad["success"] is True
     assert eval_bad["channel_evaluations"]["Temp"]["violation_pct"] == 100.0
     assert eval_bad["channel_evaluations"]["Temp"]["cumulative_deviation"] > 0.0
+
+def test_corridor_evaluation_with_fewer_and_more_channels():
+    # Baseline has Temp and Speed
+    p = np.linspace(100.0, 0.0, 50)
+    df1 = pd.DataFrame({"FMC%": p, "Temp": np.full(50, 50.0), "Speed": np.full(50, 1000.0)})
+    df2 = pd.DataFrame({"FMC%": p, "Temp": np.full(50, 52.0), "Speed": np.full(50, 1020.0)})
+    runs = [{"name": "r1.xlsx", "df": df1}, {"name": "r2.xlsx", "df": df2}]
+    baseline = build_multi_reference_baseline(runs, target_col="FMC%")
+
+    # Test file with FEWER channels (only Temp, no Speed) and an EXTRA channel (Vibration)
+    df_test = pd.DataFrame({"FMC%": p, "Temp": np.full(50, 51.0), "Vibration": np.full(50, 5.0)})
+    result = evaluate_test_run_corridor(df_test, "fewer_more.xlsx", baseline, target_col="FMC%")
+    
+    assert result["success"] is True
+    assert "Temp" in result["channel_evaluations"]
+    assert "Speed" not in result["channel_evaluations"]
+    assert "Temp" in result["matched_channels"]
+    assert "Speed" in result["missing_channels"]
+    assert "Vibration" in result["extra_test_channels"]
+
+def test_corridor_evaluation_with_mappings():
+    p = np.linspace(100.0, 0.0, 50)
+    df1 = pd.DataFrame({"FMC%": p, "Temp_ZoneA": np.full(50, 50.0)})
+    df2 = pd.DataFrame({"FMC%": p, "Temp_ZoneA": np.full(50, 52.0)})
+    baseline = build_multi_reference_baseline([{"name": "r1.xlsx", "df": df1}, {"name": "r2.xlsx", "df": df2}], target_col="FMC%")
+
+    # Test file has a different name "T_Appliance_1"
+    df_test = pd.DataFrame({"FMC%": p, "T_Appliance_1": np.full(50, 51.0)})
+    
+    # Without mappings or similarity, won't match if names are totally dissimilar
+    # With mappings:
+    mappings = {"Temp_ZoneA": "T_Appliance_1"}
+    result = evaluate_test_run_corridor(df_test, "mapped.xlsx", baseline, target_col="FMC%", mappings=mappings)
+    
+    assert result["success"] is True
+    assert "Temp_ZoneA" in result["channel_evaluations"]
+    assert result["channel_evaluations"]["Temp_ZoneA"]["matched_test_col"] == "T_Appliance_1"
+    assert result["channel_evaluations"]["Temp_ZoneA"]["violation_pct"] == 0.0
+
+def test_corridor_evaluation_zero_matching_channels_error():
+    p = np.linspace(100.0, 0.0, 50)
+    df1 = pd.DataFrame({"FMC%": p, "Temp_A": np.full(50, 50.0)})
+    df2 = pd.DataFrame({"FMC%": p, "Temp_A": np.full(50, 52.0)})
+    baseline = build_multi_reference_baseline([{"name": "r1.xlsx", "df": df1}, {"name": "r2.xlsx", "df": df2}], target_col="FMC%")
+
+    df_test = pd.DataFrame({"FMC%": p, "CompletelyUnrelatedChannel": np.full(50, 10.0)})
+    result = evaluate_test_run_corridor(df_test, "mismatch.xlsx", baseline, target_col="FMC%")
+    
+    assert result["success"] is False
+    assert "No matching sensor channels found" in result["error"]

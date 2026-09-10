@@ -10,6 +10,7 @@ import type {
 
 interface BaselineEngineViewProps {
   files: TestFile[];
+  mappings?: Record<string, string>;
   isActive?: boolean;
 }
 
@@ -43,7 +44,7 @@ function setSessionItem<T>(key: string, value: T): void {
   }
 }
 
-export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, isActive }) => {
+export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, mappings, isActive }) => {
   // Guide banner toggle (off by default so user sees clean workbench immediately)
   const [showGuide, setShowGuide] = useState(false);
 
@@ -77,6 +78,7 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, i
   );
   const [selectedTestFile, setSelectedTestFile] = useState<File | null>(null);
   const [isEvaluating, setIsEvaluating] = useState(false);
+  const [evalError, setEvalError] = useState<string | null>(null);
   const [evaluationResult, setEvaluationResult] = useState<BaselineEvaluationResponse | null>(() => 
     getSessionItem(STORAGE_KEYS.EVAL, null)
   );
@@ -138,6 +140,7 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, i
   const handleResetEngine = () => {
     setBaselineProfile(null);
     setEvaluationResult(null);
+    setEvalError(null);
     setRefFilesList([]);
     setRefFileNames([]);
     setSelectedTestFileId('');
@@ -157,6 +160,7 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, i
     if (e.target.files && e.target.files.length > 0) {
       setSelectedTestFile(e.target.files[0]);
       setSelectedTestFileId('');
+      setEvalError(null);
     }
   };
 
@@ -168,6 +172,7 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, i
   const handleBuildBaseline = async () => {
     if (refFilesList.length === 0) return;
     setIsBuilding(true);
+    setEvalError(null);
 
     try {
       const formData = new FormData();
@@ -183,7 +188,10 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, i
         body: formData
       });
 
-      if (!res.ok) throw new Error('Baseline calculation failed');
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.detail || 'Baseline calculation failed');
+      }
       const data: BaselineProfile = await res.json();
       setBaselineProfile(data);
       setRefFileNames(refFilesList.map(f => f.name));
@@ -192,8 +200,9 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, i
       if (data.availability_matrix && data.availability_matrix.length > 0) {
         setSelectedEvalChannel(data.availability_matrix[0].channel_name);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to build multi-reference baseline:', e);
+      setEvalError(e.message || 'Failed to build baseline');
     } finally {
       setIsBuilding(false);
     }
@@ -203,6 +212,7 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, i
   const handleEvaluateTestRun = async () => {
     if (!baselineProfile || (!selectedTestFileId && !selectedTestFile)) return;
     setIsEvaluating(true);
+    setEvalError(null);
 
     try {
       const formData = new FormData();
@@ -217,6 +227,9 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, i
         formData.append('pct_margin', pctMargin.toString());
       }
       formData.append('baseline_profile_json', JSON.stringify(baselineProfile));
+      if (mappings && Object.keys(mappings).length > 0) {
+        formData.append('mappings_json', JSON.stringify(mappings));
+      }
 
       const res = await fetch('http://localhost:8000/api/baseline/evaluate', {
         method: 'POST',
@@ -236,8 +249,9 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, i
           setSelectedEvalChannel(availableChs[0]);
         }
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to evaluate test run against baseline:', e);
+      setEvalError(e.message || 'Verification failed against baseline');
     } finally {
       setIsEvaluating(false);
     }
@@ -597,15 +611,33 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, i
                 <div className="sidebar-matrix-list">
                   {baselineProfile.availability_matrix.map(row => {
                     const isSelected = selectedEvalChannel === row.channel_name;
+                    const evalCh = evaluationResult?.channel_evaluations?.[row.channel_name];
+                    const isMissingInTest = evaluationResult && evaluationResult.channel_evaluations && !evalCh;
+
                     return (
                       <div 
                         key={row.channel_name}
                         onClick={() => setSelectedEvalChannel(row.channel_name)}
-                        className={`matrix-item-row ${isSelected ? 'selected' : ''}`}
+                        className={`matrix-item-row ${isSelected ? 'selected' : ''} ${isMissingInTest ? 'channel-missing-row' : ''}`}
                       >
                         <div className="matrix-item-left">
-                          <span className="matrix-item-name" title={row.channel_name}>{row.channel_name}</span>
-                          <span className="matrix-item-runs">{row.available_runs}/{row.total_accepted_runs} runs</span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                            <span className="matrix-item-name" title={row.channel_name}>{row.channel_name}</span>
+                            {evalCh && (
+                              <span className="matrix-status-pill evaluated" title={`Evaluated with test channel: ${evalCh.matched_test_col || row.channel_name}`}>
+                                ✓ Tested
+                              </span>
+                            )}
+                            {isMissingInTest && (
+                              <span className="matrix-status-pill missing" title="This sensor was not found in the tested file">
+                                Missing
+                              </span>
+                            )}
+                          </div>
+                          <span className="matrix-item-runs">
+                            {row.available_runs}/{row.total_accepted_runs} ref runs
+                            {evalCh?.matched_test_col && evalCh.matched_test_col !== row.channel_name ? ` → ${evalCh.matched_test_col}` : ''}
+                          </span>
                         </div>
                         <div className="matrix-item-bar-box">
                           <div className="matrix-item-bar-fill" style={{ width: `${row.presence_pct}%` }} />
@@ -665,6 +697,16 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, i
                   </select>
                 )}
 
+                {evalError && (
+                  <div className="sidebar-eval-error-card">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <AlertTriangle size={14} className="text-red-400" />
+                      <span className="eval-error-title">Verification Warning</span>
+                    </div>
+                    <span className="eval-error-detail">{evalError}</span>
+                  </div>
+                )}
+
                 <button 
                   onClick={handleEvaluateTestRun}
                   disabled={isEvaluating || (!selectedTestFileId && !selectedTestFile)}
@@ -689,7 +731,11 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, i
                 <span className="channel-name">{selectedEvalChannel}</span>
                 <span className="channel-grid-tag">500-pt Progress Grid (±{kSigma}σ corridor)</span>
                 {evaluationResult && (
-                  <span className="channel-test-tag">Testing: {evaluationResult.test_file_name}</span>
+                  evaluationResult.channel_evaluations?.[selectedEvalChannel] ? (
+                    <span className="channel-test-tag">Testing: {evaluationResult.test_file_name}</span>
+                  ) : (
+                    <span className="channel-test-tag missing-tag">Not recorded in {evaluationResult.test_file_name}</span>
+                  )
                 )}
               </div>
             ) : (
@@ -753,7 +799,7 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, i
         </div>
 
         {/* Stage Footer: Diagnostic Verdict Banner */}
-        {currentEvalMetrics && (
+        {currentEvalMetrics ? (
           <div className="baseline-stage-footer">
             <div className={`verdict-strip ${
               currentEvalMetrics.violation_pct === 0 ? 'pass' : 
@@ -786,7 +832,23 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, i
               </div>
             </div>
           </div>
-        )}
+        ) : evaluationResult && evaluationResult.channel_evaluations && selectedEvalChannel && !currentEvalMetrics ? (
+          <div className="baseline-stage-footer">
+            <div className="verdict-strip acceptable">
+              <div className="verdict-icon">
+                <AlertTriangle size={18} />
+              </div>
+              <div className="verdict-content">
+                <div className="verdict-title-row">
+                  <span className="verdict-title">Sensor Not Recorded in Test Appliance</span>
+                </div>
+                <span className="verdict-explanation">
+                  Sensor <b>{selectedEvalChannel}</b> is part of the golden baseline, but was not present in test file <b>{evaluationResult.test_file_name}</b>. Click any sensor marked <b>✓ Tested</b> in the Schema Availability Matrix to inspect verified test data.
+                </span>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </main>
     </div>
   );

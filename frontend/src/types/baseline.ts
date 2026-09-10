@@ -84,6 +84,7 @@ export interface BaselineProfile {
 
 export interface CorridorViolationResult {
   channel_name: string;
+  matched_test_col?: string;
   violation_pct: number;
   cumulative_deviation: number;
   slope_correlation: number;
@@ -102,5 +103,8 @@ export interface BaselineEvaluationResponse {
   pct_margin?: number;
   grid: number[];
   channel_evaluations: Record<string, CorridorViolationResult>;
+  matched_channels?: string[];
+  missing_channels?: string[];
+  extra_test_channels?: string[];
   error?: string;
 }

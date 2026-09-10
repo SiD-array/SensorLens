@@ -1042,6 +1042,7 @@ export default function App() {
         <div style={{ display: activeView === 'baseline' ? 'flex' : 'none', flex: 1, minHeight: 0, height: '100%', width: '100%', flexDirection: 'column' }}>
           <BaselineEngineView
             files={files}
+            mappings={mappings}
             isActive={activeView === 'baseline'}
           />
         </div>
