@@ -1,7 +1,9 @@
 # Virtual Environment
 backend/.venv/
-backend/__pycache__/
-backend/*.pyc
+**/__pycache__/
+**/*.pyc
+__pycache__/
+*.pyc
 
 # Local Database & Feedback Logs
 backend/similarity_feedback_log.jsonl

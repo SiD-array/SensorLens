@@ -111,18 +111,20 @@ export function resolveSensorBucket(
   buckets: SensorBucket[],
   bucketMap: SensorBucketMap
 ): SensorBucket {
+  const safeBuckets = (buckets && buckets.length > 0) ? buckets : DEFAULT_BUCKETS;
+
   // Check user explicit mapping first
   const mappedBucketId = bucketMap[colName];
   if (mappedBucketId) {
-    const found = buckets.find(b => b.id === mappedBucketId);
+    const found = safeBuckets.find(b => b.id === mappedBucketId);
     if (found) return found;
   }
 
   // Fallback to prefix heuristic
   const prefixCatId = getCategoryPrefix(colName);
-  const prefixBucket = buckets.find(b => b.id === prefixCatId);
+  const prefixBucket = safeBuckets.find(b => b.id === prefixCatId);
   if (prefixBucket) return prefixBucket;
 
-  // Final fallback: General Sensors or first bucket
-  return buckets.find(b => b.id === 'cat_general') || buckets[0];
+  // Final fallback: General Sensors or first available bucket
+  return safeBuckets.find(b => b.id === 'cat_general') || safeBuckets[0];
 }

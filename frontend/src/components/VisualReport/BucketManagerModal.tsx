@@ -92,19 +92,31 @@ export const BucketManagerModal: React.FC<BucketManagerModalProps> = ({
     setIsCreating(false);
   };
 
-  // Delete bucket
+  // Delete bucket (default or custom)
   const handleDeleteBucket = (id: string) => {
+    if (buckets.length <= 1) {
+      alert("Cannot delete the last remaining category. At least one category must be kept.");
+      return;
+    }
+
     const updatedBuckets = buckets.filter(b => b.id !== id);
-    // Remove all mappings to this bucket
+    const fallbackBucketId = updatedBuckets[0]?.id;
+
+    // Re-route all sensors currently mapped to this bucket to the first remaining category
     const updatedMap = { ...bucketMap };
     Object.keys(updatedMap).forEach(key => {
       if (updatedMap[key] === id) {
-        delete updatedMap[key];
+        if (fallbackBucketId) {
+          updatedMap[key] = fallbackBucketId;
+        } else {
+          delete updatedMap[key];
+        }
       }
     });
+
     onUpdateBuckets(updatedBuckets);
     onUpdateBucketMap(updatedMap);
-    setSelectedBucketId(updatedBuckets[0]?.id || 'cat_general');
+    setSelectedBucketId(fallbackBucketId || 'cat_general');
   };
 
   // Rename bucket
@@ -131,14 +143,10 @@ export const BucketManagerModal: React.FC<BucketManagerModalProps> = ({
     onUpdateBucketMap(updatedMap);
   };
 
-  // Remove sensor from current bucket (resets mapping to default)
+  // Remove sensor from current bucket (reassigns to fallback category)
   const handleRemoveSensor = (colName: string) => {
-    const updatedMap = { ...bucketMap };
-    delete updatedMap[colName];
-    // If it still resolves to this bucket by prefix and it's a default bucket, we can explicitly map it to General
-    if (resolveSensorBucket(colName, buckets, updatedMap).id === currentBucket.id) {
-      updatedMap[colName] = 'cat_general';
-    }
+    const fallback = buckets.find(b => b.id !== currentBucket.id)?.id || 'cat_general';
+    const updatedMap = { ...bucketMap, [colName]: fallback };
     onUpdateBucketMap(updatedMap);
   };
 
@@ -339,14 +347,14 @@ export const BucketManagerModal: React.FC<BucketManagerModalProps> = ({
                       ))}
                     </div>
 
-                    {!currentBucket.isDefault && (
+                    {buckets.length > 1 && (
                       <button 
                         onClick={() => handleDeleteBucket(currentBucket.id)}
                         className="btn-delete-bucket"
-                        title="Delete custom category"
+                        title={currentBucket.isDefault ? "Delete default category" : "Delete custom category"}
                       >
                         <Trash2 size={13} />
-                        <span>Delete</span>
+                        <span>Delete Category</span>
                       </button>
                     )}
                   </div>

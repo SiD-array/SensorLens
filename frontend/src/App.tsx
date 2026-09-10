@@ -1038,12 +1038,13 @@ export default function App() {
           />
         )}
 
-        {/* VIEW 4: BASELINE ENGINE (FEATURE 3 UPGRADE) */}
-        {activeView === 'baseline' && (
+        {/* VIEW 4: BASELINE ENGINE (FEATURE 3 UPGRADE - PRESERVED STATE) */}
+        <div style={{ display: activeView === 'baseline' ? 'flex' : 'none', flex: 1, minHeight: 0, height: '100%', width: '100%', flexDirection: 'column' }}>
           <BaselineEngineView
             files={files}
+            isActive={activeView === 'baseline'}
           />
-        )}
+        </div>
 
         {/* VIEW 3: SIMILARITY COMPARISON */}
         {activeView === 'compare' && (

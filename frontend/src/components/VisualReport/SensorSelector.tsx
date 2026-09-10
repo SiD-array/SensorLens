@@ -302,11 +302,20 @@ export const SensorSelector: React.FC<SensorSelectorProps> = ({
 
   const handleDeleteCategory = (catId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!window.confirm('Delete this custom category? Sensors will move to General Sensors.')) return;
+    if (buckets.length <= 1) {
+      alert('Cannot delete the last remaining category. At least one category must be kept.');
+      return;
+    }
+    const catToDelete = buckets.find(b => b.id === catId);
+    if (!window.confirm(`Delete category '${catToDelete?.name || ''}'? Assigned sensors will move to another category.`)) return;
     const updatedBuckets = buckets.filter(b => b.id !== catId);
+    const fallbackId = updatedBuckets[0]?.id;
     const updatedMap = { ...bucketMap };
     Object.keys(updatedMap).forEach(k => {
-      if (updatedMap[k] === catId) delete updatedMap[k];
+      if (updatedMap[k] === catId) {
+        if (fallbackId) updatedMap[k] = fallbackId;
+        else delete updatedMap[k];
+      }
     });
     handleUpdateBuckets(updatedBuckets);
     handleUpdateBucketMap(updatedMap);
@@ -565,11 +574,11 @@ export const SensorSelector: React.FC<SensorSelectorProps> = ({
                           {selectedInGroup > 0 ? `${selectedInGroup}/` : ''}{items.length}
                         </span>
 
-                        {!bucket.isDefault && (
+                        {buckets.length > 1 && (
                           <button 
                             onClick={(e) => handleDeleteCategory(bucket.id, e)}
                             className="category-del-inline-btn"
-                            title={`Delete custom category '${bucket.name}'`}
+                            title={`Delete category '${bucket.name}'`}
                           >
                             <Trash2 size={11} />
                           </button>

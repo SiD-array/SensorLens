@@ -1,13 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   DragDropContext, Droppable, Draggable 
 } from '@hello-pangea/dnd';
 import type { DropResult } from '@hello-pangea/dnd';
 import { 
   Sparkles, ArrowRight, RefreshCw, X, Play, 
-  CheckCircle2, HelpCircle, GripVertical
+  CheckCircle2, HelpCircle, GripVertical, Folder, Filter
 } from 'lucide-react';
 import type { TestFile, LexicalMatchItem, PairScoreResult } from '../../types/baseline';
+import { BucketManagerModal } from '../VisualReport/BucketManagerModal';
+import { 
+  loadBuckets, saveBuckets, loadBucketMap, saveBucketMap, resolveSensorBucket 
+} from '../VisualReport/bucketUtils';
+import type { SensorBucket, SensorBucketMap } from '../VisualReport/bucketUtils';
 
 interface ColumnAlignmentViewProps {
   files: TestFile[];
@@ -91,6 +96,30 @@ export const ColumnAlignmentView: React.FC<ColumnAlignmentViewProps> = ({
   const [isMatching, setIsMatching] = useState(false);
   const [lexicalMatches, setLexicalMatches] = useState<LexicalMatchItem[]>([]);
   const [pairScores, setPairScores] = useState<Record<string, PairScoreResult>>({});
+
+  // Sensor Category Management State
+  const [buckets, setBuckets] = useState<SensorBucket[]>(() => loadBuckets());
+  const [bucketMap, setBucketMap] = useState<SensorBucketMap>(() => loadBucketMap());
+  const [isBucketModalOpen, setIsBucketModalOpen] = useState(false);
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
+
+  const handleUpdateBuckets = (newBuckets: SensorBucket[]) => {
+    setBuckets(newBuckets);
+    saveBuckets(newBuckets);
+  };
+
+  const handleUpdateBucketMap = (newMap: SensorBucketMap) => {
+    setBucketMap(newMap);
+    saveBucketMap(newMap);
+  };
+
+  const allSensorNames = useMemo(() => {
+    const names = new Set<string>();
+    files.forEach(f => {
+      f.columns.filter(c => c.type === 'numeric').forEach(c => names.add(c.name));
+    });
+    return Array.from(names);
+  }, [files]);
 
   const refFile = files.find(f => f.id === activeRefId);
   const testFile = files.find(f => f.id === activeTestId);
@@ -266,6 +295,11 @@ export const ColumnAlignmentView: React.FC<ColumnAlignmentViewProps> = ({
     setUnassignedPool([...unassignedPool, occupant]);
   };
 
+  const filteredUnassignedPool = useMemo(() => {
+    if (categoryFilter === 'all') return unassignedPool;
+    return unassignedPool.filter(c => resolveSensorBucket(c, buckets, bucketMap).id === categoryFilter);
+  }, [unassignedPool, categoryFilter, buckets, bucketMap]);
+
   return (
     <div className="column-alignment-layout">
       {/* Alignment Stage Header Bar */}
@@ -279,6 +313,15 @@ export const ColumnAlignmentView: React.FC<ColumnAlignmentViewProps> = ({
         </div>
 
         <div className="alignment-header-actions">
+          <button 
+            onClick={() => setIsBucketModalOpen(true)}
+            className="btn btn-secondary btn-manage-cats"
+            title="Configure, group, or delete sensor categories"
+          >
+            <Folder size={14} className="text-accent-cyan" />
+            <span>Manage Categories ({buckets.length})</span>
+          </button>
+
           <button 
             onClick={runDeterministicLexicalMatch}
             disabled={isMatching || !activeRefId || !activeTestId}
@@ -366,12 +409,19 @@ export const ColumnAlignmentView: React.FC<ColumnAlignmentViewProps> = ({
                   const badge = computeAlignmentBadge(refCol.name, mappedTestCol, lexicalMatches);
                   const scoreKey = `${refCol.name}_${mappedTestCol}`;
                   const score = mappedTestCol ? pairScores[scoreKey] : null;
+                  const refBucket = resolveSensorBucket(refCol.name, buckets, bucketMap);
+                  const mappedBucket = mappedTestCol ? resolveSensorBucket(mappedTestCol, buckets, bucketMap) : null;
 
                   return (
                     <div key={refCol.name} className="alignment-slot-row">
                       {/* Reference Target Column Box */}
                       <div className="ref-col-box">
                         <div className="ref-col-header">
+                          <span 
+                            className="slot-cat-dot" 
+                            style={{ backgroundColor: refBucket.color }} 
+                            title={`Category: ${refBucket.name}`} 
+                          />
                           <span className="slot-index">#{idx + 1}</span>
                           <span className="ref-col-name" title={refCol.name}>{refCol.name}</span>
                         </div>
@@ -408,6 +458,13 @@ export const ColumnAlignmentView: React.FC<ColumnAlignmentViewProps> = ({
                                     <div className="card-top-row">
                                       <div className="card-drag-handle">
                                         <GripVertical size={14} />
+                                        {mappedBucket && (
+                                          <span 
+                                            className="slot-cat-dot" 
+                                            style={{ backgroundColor: mappedBucket.color }} 
+                                            title={`Category: ${mappedBucket.name}`} 
+                                          />
+                                        )}
                                         <span className="test-channel-title" title={mappedTestCol}>
                                           {mappedTestCol}
                                         </span>
@@ -502,10 +559,31 @@ export const ColumnAlignmentView: React.FC<ColumnAlignmentViewProps> = ({
                 <div>
                   <span className="panel-title">Unassigned Test Channels</span>
                   <span className="count-pill highlight" style={{ marginLeft: '8px' }}>
-                    {unassignedPool.length}
+                    {filteredUnassignedPool.length}{categoryFilter !== 'all' ? ` / ${unassignedPool.length}` : ''}
                   </span>
                 </div>
                 <span className="panel-subtitle">Channels without confident lexical match</span>
+              </div>
+
+              {/* Category Filter for Bank */}
+              <div className="bank-filter-row">
+                <Filter size={13} className="text-muted" />
+                <select
+                  value={categoryFilter}
+                  onChange={(e) => setCategoryFilter(e.target.value)}
+                  className="bank-category-select"
+                  title="Filter unassigned channels by category"
+                >
+                  <option value="all">All Categories ({unassignedPool.length})</option>
+                  {buckets.map(b => {
+                    const count = unassignedPool.filter(c => resolveSensorBucket(c, buckets, bucketMap).id === b.id).length;
+                    return (
+                      <option key={b.id} value={b.id}>
+                        {b.name} ({count})
+                      </option>
+                    );
+                  })}
+                </select>
               </div>
 
               <Droppable droppableId="unassigned-pool">
@@ -515,58 +593,70 @@ export const ColumnAlignmentView: React.FC<ColumnAlignmentViewProps> = ({
                     {...provided.droppableProps}
                     className={`unassigned-bank-body ${snapshot.isDraggingOver ? 'dragging-over' : ''}`}
                   >
-                    {unassignedPool.length === 0 ? (
+                    {filteredUnassignedPool.length === 0 ? (
                       <div className="bank-empty-state">
                         <CheckCircle2 size={24} className="text-emerald-400" />
-                        <span>All test channels have been aligned!</span>
+                        <span>
+                          {unassignedPool.length === 0 
+                            ? 'All test channels have been aligned!' 
+                            : 'No unassigned channels in this category'}
+                        </span>
                       </div>
                     ) : (
-                      unassignedPool.map((channelName, index) => (
-                        <Draggable key={channelName} draggableId={channelName} index={index}>
-                          {(dragProvided, dragSnapshot) => (
-                            <div
-                              ref={dragProvided.innerRef}
-                              {...dragProvided.draggableProps}
-                              {...dragProvided.dragHandleProps}
-                              className={`bank-channel-card ${dragSnapshot.isDragging ? 'is-dragging' : ''}`}
-                            >
-                              <div className="card-drag-handle">
-                                <GripVertical size={14} />
-                                <span className="bank-channel-name" title={channelName}>
-                                  {channelName}
-                                </span>
+                      filteredUnassignedPool.map((channelName, index) => {
+                        const cardBucket = resolveSensorBucket(channelName, buckets, bucketMap);
+                        return (
+                          <Draggable key={channelName} draggableId={channelName} index={index}>
+                            {(dragProvided, dragSnapshot) => (
+                              <div
+                                ref={dragProvided.innerRef}
+                                {...dragProvided.draggableProps}
+                                {...dragProvided.dragHandleProps}
+                                className={`bank-channel-card ${dragSnapshot.isDragging ? 'is-dragging' : ''}`}
+                              >
+                                <div className="card-drag-handle">
+                                  <GripVertical size={14} />
+                                  <span 
+                                    className="slot-cat-dot" 
+                                    style={{ backgroundColor: cardBucket.color }} 
+                                    title={`Category: ${cardBucket.name}`} 
+                                  />
+                                  <span className="bank-channel-name" title={channelName}>
+                                    {channelName}
+                                  </span>
+                                </div>
+                                <div className="bank-card-actions">
+                                  <select
+                                    value=""
+                                    onChange={(e) => {
+                                      if (e.target.value) {
+                                        const targetRefCol = e.target.value;
+                                        const existingOccupant = mappings[targetRefCol];
+                                        const newMappings = { ...mappings, [targetRefCol]: channelName };
+                                        const newPool = unassignedPool.filter(c => c !== channelName);
+                                        if (existingOccupant) newPool.push(existingOccupant);
+                                        setMappings(newMappings);
+                                        setUnassignedPool(newPool);
+                                        triggerDebouncedPairScore(targetRefCol, channelName);
+                                      }
+                                    }}
+                                    onMouseDown={(e) => e.stopPropagation()}
+                                    className="bank-assign-select"
+                                    title="Assign channel directly to a slot"
+                                  >
+                                    <option value="">Assign to...</option>
+                                    {refFile.columns.map((c, i) => (
+                                      <option key={c.name} value={c.name}>
+                                        Slot #{i + 1}: {c.name} {mappings[c.name] ? `(${mappings[c.name]})` : '(Empty)'}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
                               </div>
-                              <div className="bank-card-actions">
-                                <select
-                                  value=""
-                                  onChange={(e) => {
-                                    if (e.target.value) {
-                                      const targetRefCol = e.target.value;
-                                      const existingOccupant = mappings[targetRefCol];
-                                      const newMappings = { ...mappings, [targetRefCol]: channelName };
-                                      const newPool = unassignedPool.filter(c => c !== channelName);
-                                      if (existingOccupant) newPool.push(existingOccupant);
-                                      setMappings(newMappings);
-                                      setUnassignedPool(newPool);
-                                      triggerDebouncedPairScore(targetRefCol, channelName);
-                                    }
-                                  }}
-                                  onMouseDown={(e) => e.stopPropagation()}
-                                  className="bank-assign-select"
-                                  title="Assign channel directly to a slot"
-                                >
-                                  <option value="">Assign to...</option>
-                                  {refFile.columns.map((c, i) => (
-                                    <option key={c.name} value={c.name}>
-                                      Slot #{i + 1}: {c.name} {mappings[c.name] ? `(${mappings[c.name]})` : '(Empty)'}
-                                    </option>
-                                  ))}
-                                </select>
-                              </div>
-                            </div>
-                          )}
-                        </Draggable>
-                      ))
+                            )}
+                          </Draggable>
+                        );
+                      })
                     )}
                     {provided.placeholder}
                   </div>
@@ -583,6 +673,17 @@ export const ColumnAlignmentView: React.FC<ColumnAlignmentViewProps> = ({
           <p>The Two-Stage Alignment workspace will align their schemas.</p>
         </div>
       )}
+
+      {/* Sensor Category Configuration Modal */}
+      <BucketManagerModal
+        isOpen={isBucketModalOpen}
+        onClose={() => setIsBucketModalOpen(false)}
+        buckets={buckets}
+        bucketMap={bucketMap}
+        availableSensorNames={allSensorNames}
+        onUpdateBuckets={handleUpdateBuckets}
+        onUpdateBucketMap={handleUpdateBucketMap}
+      />
     </div>
   );
 };

@@ -1,8 +1,8 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { 
   Upload, Sliders, Activity, RefreshCw, BarChart2, 
-  ArrowDown, ArrowUp, Lightbulb, CheckCircle2, AlertTriangle
+  ArrowDown, ArrowUp, Lightbulb, CheckCircle2, AlertTriangle, Trash2
 } from 'lucide-react';
 import type { 
   TestFile, BaselineProfile, BaselineEvaluationResponse 
@@ -10,30 +10,138 @@ import type {
 
 interface BaselineEngineViewProps {
   files: TestFile[];
+  isActive?: boolean;
 }
 
-export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files }) => {
+const STORAGE_KEYS = {
+  PROFILE: 'sensorlens_baseline_profile',
+  EVAL: 'sensorlens_baseline_eval',
+  TARGET_COL: 'sensorlens_baseline_target_col',
+  DIRECTION: 'sensorlens_baseline_direction',
+  K_SIGMA: 'sensorlens_baseline_k_sigma',
+  PCT_MARGIN: 'sensorlens_baseline_pct_margin',
+  TEST_ID: 'sensorlens_baseline_test_id',
+  EVAL_CH: 'sensorlens_baseline_eval_ch',
+  REF_NAMES: 'sensorlens_baseline_ref_names'
+};
+
+function getSessionItem<T>(key: string, fallback: T): T {
+  try {
+    const item = sessionStorage.getItem(key);
+    if (!item) return fallback;
+    return JSON.parse(item);
+  } catch {
+    return fallback;
+  }
+}
+
+function setSessionItem<T>(key: string, value: T): void {
+  try {
+    sessionStorage.setItem(key, JSON.stringify(value));
+  } catch (e) {
+    console.error('Failed to write to sessionStorage:', e);
+  }
+}
+
+export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, isActive }) => {
   // Guide banner toggle (off by default so user sees clean workbench immediately)
   const [showGuide, setShowGuide] = useState(false);
 
   // Config
-  const [targetCol, setTargetCol] = useState('FMC%');
-  const [direction, setDirection] = useState<'downward' | 'upward'>('downward');
-  const [kSigma, setKSigma] = useState(2.0);
-  const [pctMargin, setPctMargin] = useState<number>(0);
+  const [targetCol, setTargetCol] = useState<string>(() => 
+    getSessionItem(STORAGE_KEYS.TARGET_COL, 'FMC%')
+  );
+  const [direction, setDirection] = useState<'downward' | 'upward'>(() => 
+    getSessionItem(STORAGE_KEYS.DIRECTION, 'downward')
+  );
+  const [kSigma, setKSigma] = useState<number>(() => 
+    getSessionItem(STORAGE_KEYS.K_SIGMA, 2.0)
+  );
+  const [pctMargin, setPctMargin] = useState<number>(() => 
+    getSessionItem(STORAGE_KEYS.PCT_MARGIN, 0)
+  );
 
   // Reference Files to Ingest for Baseline
   const [refFilesList, setRefFilesList] = useState<File[]>([]);
+  const [refFileNames, setRefFileNames] = useState<string[]>(() => 
+    getSessionItem(STORAGE_KEYS.REF_NAMES, [])
+  );
   const [isBuilding, setIsBuilding] = useState(false);
-  const [baselineProfile, setBaselineProfile] = useState<BaselineProfile | null>(null);
+  const [baselineProfile, setBaselineProfile] = useState<BaselineProfile | null>(() => 
+    getSessionItem(STORAGE_KEYS.PROFILE, null)
+  );
 
   // Test Run Evaluation
-  const [selectedTestFileId, setSelectedTestFileId] = useState('');
+  const [selectedTestFileId, setSelectedTestFileId] = useState<string>(() => 
+    getSessionItem(STORAGE_KEYS.TEST_ID, '')
+  );
   const [isEvaluating, setIsEvaluating] = useState(false);
-  const [evaluationResult, setEvaluationResult] = useState<BaselineEvaluationResponse | null>(null);
-  const [selectedEvalChannel, setSelectedEvalChannel] = useState('');
+  const [evaluationResult, setEvaluationResult] = useState<BaselineEvaluationResponse | null>(() => 
+    getSessionItem(STORAGE_KEYS.EVAL, null)
+  );
+  const [selectedEvalChannel, setSelectedEvalChannel] = useState<string>(() => 
+    getSessionItem(STORAGE_KEYS.EVAL_CH, '')
+  );
 
   const multiFileInputRef = useRef<HTMLInputElement>(null);
+  const echartsRef = useRef<any>(null);
+
+  // Resize ECharts when active view tab changes to baseline
+  useEffect(() => {
+    if (isActive) {
+      const timer = setTimeout(() => {
+        echartsRef.current?.getEchartsInstance()?.resize();
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [isActive]);
+
+  // Synchronize state changes to sessionStorage
+  useEffect(() => {
+    setSessionItem(STORAGE_KEYS.TARGET_COL, targetCol);
+  }, [targetCol]);
+
+  useEffect(() => {
+    setSessionItem(STORAGE_KEYS.DIRECTION, direction);
+  }, [direction]);
+
+  useEffect(() => {
+    setSessionItem(STORAGE_KEYS.K_SIGMA, kSigma);
+  }, [kSigma]);
+
+  useEffect(() => {
+    setSessionItem(STORAGE_KEYS.PCT_MARGIN, pctMargin);
+  }, [pctMargin]);
+
+  useEffect(() => {
+    setSessionItem(STORAGE_KEYS.PROFILE, baselineProfile);
+  }, [baselineProfile]);
+
+  useEffect(() => {
+    setSessionItem(STORAGE_KEYS.REF_NAMES, refFileNames);
+  }, [refFileNames]);
+
+  useEffect(() => {
+    setSessionItem(STORAGE_KEYS.TEST_ID, selectedTestFileId);
+  }, [selectedTestFileId]);
+
+  useEffect(() => {
+    setSessionItem(STORAGE_KEYS.EVAL, evaluationResult);
+  }, [evaluationResult]);
+
+  useEffect(() => {
+    setSessionItem(STORAGE_KEYS.EVAL_CH, selectedEvalChannel);
+  }, [selectedEvalChannel]);
+
+  const handleResetEngine = () => {
+    setBaselineProfile(null);
+    setEvaluationResult(null);
+    setRefFilesList([]);
+    setRefFileNames([]);
+    setSelectedTestFileId('');
+    setSelectedEvalChannel('');
+    Object.values(STORAGE_KEYS).forEach(k => sessionStorage.removeItem(k));
+  };
 
   const handleSelectFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -68,6 +176,7 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files })
       if (!res.ok) throw new Error('Baseline calculation failed');
       const data: BaselineProfile = await res.json();
       setBaselineProfile(data);
+      setRefFileNames(refFilesList.map(f => f.name));
 
       // Auto select first channel for evaluation view
       if (data.availability_matrix && data.availability_matrix.length > 0) {
@@ -300,9 +409,21 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files })
             <Sliders size={16} className="text-accent-cyan" />
             <span className="sidebar-title">Baseline Controller</span>
           </div>
-          <span className={`baseline-status-pill ${baselineProfile?.success ? 'active' : ''}`}>
-            {baselineProfile?.success ? 'Active' : 'Setup'}
-          </span>
+          <div className="sidebar-header-actions" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            {(baselineProfile || evaluationResult || refFilesList.length > 0) && (
+              <button 
+                onClick={handleResetEngine}
+                className="btn-clear-baseline"
+                title="Reset baseline profile, evaluation data, and calculations"
+              >
+                <Trash2 size={12} />
+                <span>Clear</span>
+              </button>
+            )}
+            <span className={`baseline-status-pill ${baselineProfile?.success ? 'active' : ''}`}>
+              {baselineProfile?.success ? 'Active' : 'Setup'}
+            </span>
+          </div>
         </div>
 
         <div className="sidebar-scrollable-body">
@@ -333,6 +454,15 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files })
                   <span key={idx} className="sidebar-file-chip">
                     <span className="chip-name" title={f.name}>{f.name}</span>
                     <button onClick={() => removeSelectedFile(idx)} className="chip-remove">×</button>
+                  </span>
+                ))}
+              </div>
+            ) : refFileNames.length > 0 && baselineProfile ? (
+              <div className="sidebar-files-pills active-ref-summary">
+                <span className="active-ref-label">Active Baseline Built From:</span>
+                {refFileNames.map((name, idx) => (
+                  <span key={idx} className="sidebar-file-chip persisted">
+                    <span className="chip-name" title={name}>{name}</span>
                   </span>
                 ))}
               </div>
@@ -528,6 +658,7 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files })
           {baselineProfile && baselineProfile.success ? (
             <div className="baseline-chart-wrapper">
               <ReactECharts 
+                ref={echartsRef}
                 option={getCorridorChartOption()}
                 notMerge={true}
                 lazyUpdate={true}
