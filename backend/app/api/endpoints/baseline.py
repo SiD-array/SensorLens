@@ -1,4 +1,5 @@
 import io
+import json
 from typing import List, Dict, Optional, Any
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel
@@ -165,17 +166,25 @@ async def evaluate_baseline_endpoint(
     test_file: Optional[UploadFile] = File(None),
     target_col: str = Form("FMC%"),
     k_sigma: float = Form(2.0),
-    pct_margin: Optional[float] = Form(None)
+    pct_margin: Optional[float] = Form(None),
+    baseline_profile_json: Optional[str] = Form(None)
 ):
     """
     Evaluates a test run against the active baseline profile.
     Computes Corridor Violation %, Cumulative Absolute Deviation,
     and Pearson Slope Correlation.
     """
-    if "active" not in current_baseline_cache:
+    if baseline_profile_json:
+        try:
+            baseline_profile = json.loads(baseline_profile_json)
+            current_baseline_cache["active"] = baseline_profile
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid baseline_profile JSON: {str(e)}")
+    elif "active" in current_baseline_cache:
+        baseline_profile = current_baseline_cache["active"]
+    else:
         raise HTTPException(status_code=400, detail="No active multi-reference baseline built yet. Build baseline first.")
 
-    baseline_profile = current_baseline_cache["active"]
     test_df = None
     file_name = "Test_Run"
 

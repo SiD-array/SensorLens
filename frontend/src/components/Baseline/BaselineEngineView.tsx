@@ -75,6 +75,7 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, i
   const [selectedTestFileId, setSelectedTestFileId] = useState<string>(() => 
     getSessionItem(STORAGE_KEYS.TEST_ID, '')
   );
+  const [selectedTestFile, setSelectedTestFile] = useState<File | null>(null);
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [evaluationResult, setEvaluationResult] = useState<BaselineEvaluationResponse | null>(() => 
     getSessionItem(STORAGE_KEYS.EVAL, null)
@@ -84,6 +85,7 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, i
   );
 
   const multiFileInputRef = useRef<HTMLInputElement>(null);
+  const testFileInputRef = useRef<HTMLInputElement>(null);
   const echartsRef = useRef<any>(null);
 
   // Resize ECharts when active view tab changes to baseline
@@ -139,6 +141,7 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, i
     setRefFilesList([]);
     setRefFileNames([]);
     setSelectedTestFileId('');
+    setSelectedTestFile(null);
     setSelectedEvalChannel('');
     Object.values(STORAGE_KEYS).forEach(k => sessionStorage.removeItem(k));
   };
@@ -147,6 +150,13 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, i
     if (e.target.files && e.target.files.length > 0) {
       const selected = Array.from(e.target.files);
       setRefFilesList(prev => [...prev, ...selected]);
+    }
+  };
+
+  const handleSelectTestFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setSelectedTestFile(e.target.files[0]);
+      setSelectedTestFileId('');
     }
   };
 
@@ -191,30 +201,40 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, i
 
   // Evaluate Test Run against Baseline
   const handleEvaluateTestRun = async () => {
-    if (!baselineProfile || !selectedTestFileId) return;
+    if (!baselineProfile || (!selectedTestFileId && !selectedTestFile)) return;
     setIsEvaluating(true);
 
     try {
       const formData = new FormData();
-      formData.append('test_file_id', selectedTestFileId);
+      if (selectedTestFile) {
+        formData.append('test_file', selectedTestFile);
+      } else if (selectedTestFileId) {
+        formData.append('test_file_id', selectedTestFileId);
+      }
       formData.append('target_col', targetCol);
       formData.append('k_sigma', kSigma.toString());
       if (pctMargin > 0) {
         formData.append('pct_margin', pctMargin.toString());
       }
+      formData.append('baseline_profile_json', JSON.stringify(baselineProfile));
 
       const res = await fetch('http://localhost:8000/api/baseline/evaluate', {
         method: 'POST',
         body: formData
       });
 
-      if (!res.ok) throw new Error('Evaluation failed');
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.detail || 'Evaluation failed');
+      }
       const data: BaselineEvaluationResponse = await res.json();
       setEvaluationResult(data);
 
       if (data.channel_evaluations) {
-        const firstCh = Object.keys(data.channel_evaluations)[0];
-        if (firstCh) setSelectedEvalChannel(firstCh);
+        const availableChs = Object.keys(data.channel_evaluations);
+        if (availableChs.length > 0 && !data.channel_evaluations[selectedEvalChannel]) {
+          setSelectedEvalChannel(availableChs[0]);
+        }
       }
     } catch (e) {
       console.error('Failed to evaluate test run against baseline:', e);
@@ -601,21 +621,53 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, i
 
               {/* Section 3: Verify Test Run */}
               <div className="sidebar-section">
-                <span className="section-label">3. Verify Test Appliance</span>
-                <select 
-                  value={selectedTestFileId}
-                  onChange={(e) => setSelectedTestFileId(e.target.value)}
-                  className="field-select"
-                >
-                  <option value="">-- Choose Test Run --</option>
-                  {files.map(f => (
-                    <option key={f.id} value={f.id}>{f.name} ({f.columns.length} ch)</option>
-                  ))}
-                </select>
+                <div className="section-label-row">
+                  <span className="section-label">3. Verify Test Appliance</span>
+                  <button 
+                    onClick={() => testFileInputRef.current?.click()}
+                    className="btn-select-files"
+                    title="Upload a test file directly from disk to verify"
+                  >
+                    <Upload size={12} />
+                    <span>Upload Test Run</span>
+                  </button>
+                  <input 
+                    type="file" 
+                    ref={testFileInputRef}
+                    onChange={handleSelectTestFile}
+                    accept=".xlsx,.xls,.csv"
+                    className="hidden"
+                  />
+                </div>
+
+                {selectedTestFile ? (
+                  <div className="sidebar-files-pills">
+                    <span className="sidebar-file-chip">
+                      <span className="chip-name" title={selectedTestFile.name}>
+                        Testing: <b>{selectedTestFile.name}</b>
+                      </span>
+                      <button onClick={() => setSelectedTestFile(null)} className="chip-remove">×</button>
+                    </span>
+                  </div>
+                ) : (
+                  <select 
+                    value={selectedTestFileId}
+                    onChange={(e) => {
+                      setSelectedTestFileId(e.target.value);
+                      setSelectedTestFile(null);
+                    }}
+                    className="field-select"
+                  >
+                    <option value="">-- Choose From Uploaded Runs --</option>
+                    {files.map(f => (
+                      <option key={f.id} value={f.id}>{f.name} ({f.columns.length} ch)</option>
+                    ))}
+                  </select>
+                )}
 
                 <button 
                   onClick={handleEvaluateTestRun}
-                  disabled={isEvaluating || !selectedTestFileId}
+                  disabled={isEvaluating || (!selectedTestFileId && !selectedTestFile)}
                   className="btn btn-accent btn-verify-test"
                 >
                   {isEvaluating ? <RefreshCw className="animate-spin" size={13} /> : <Activity size={13} />}
