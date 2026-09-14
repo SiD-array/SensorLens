@@ -8,6 +8,7 @@ import {
 import { VisualReportView } from './components/VisualReport/VisualReportView';
 import { ColumnAlignmentView } from './components/ColumnAlignment/ColumnAlignmentView';
 import { BaselineEngineView } from './components/Baseline/BaselineEngineView';
+import { AnalyticsView } from './components/Analytics/AnalyticsView';
 
 
 interface SensorColumn {
@@ -67,7 +68,7 @@ export default function App() {
   const [selectedPlotCols, setSelectedPlotCols] = useState<Array<{ fileId: string; colName: string; fileName?: string }>>([]);
   
   // UI Panels / Views
-  const [activeView, setActiveView] = useState<'dashboard' | 'visualizer' | 'alignment' | 'baseline' | 'compare'>('dashboard');
+  const [activeView, setActiveView] = useState<'dashboard' | 'visualizer' | 'alignment' | 'baseline' | 'compare' | 'analytics'>('dashboard');
   const [isUploading, setIsUploading] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -591,6 +592,12 @@ export default function App() {
           >
             Similarity Matcher
           </button>
+          <button 
+            onClick={() => setActiveView('analytics')}
+            className={`toggle-btn ${activeView === 'analytics' ? 'active' : ''}`}
+          >
+            Analytics & ML Studio
+          </button>
         </div>
 
         {/* Configuration Actions */}
@@ -765,7 +772,7 @@ export default function App() {
       <main className="flex-1" style={{ position: 'relative', overflow: 'hidden' }}>
         
         {/* VIEW 1: DASHBOARD */}
-        {activeView === 'dashboard' && (
+        <div style={{ display: activeView === 'dashboard' ? 'flex' : 'none', flex: 1, minHeight: 0, height: '100%', width: '100%', flexDirection: 'column' }}>
           <div className="dashboard-layout">
             
             {/* Left Library Column */}
@@ -1007,7 +1014,7 @@ export default function App() {
             </div>
 
           </div>
-        )}
+        </div>
 
         {/* VIEW 2: VISUAL REPORT (FEATURE 1 UPGRADE) */}
         {activeView === 'visualizer' && (
@@ -1047,7 +1054,7 @@ export default function App() {
           />
         </div>
 
-        {/* VIEW 3: SIMILARITY COMPARISON */}
+        {/* VIEW 5: SIMILARITY COMPARISON */}
         {activeView === 'compare' && (
           <div className="compare-layout">
             
@@ -1348,6 +1355,14 @@ export default function App() {
 
           </div>
         )}
+
+        {/* VIEW 6: ANALYTICS & ML STUDIO (FEATURE 4) */}
+        <div style={{ display: activeView === 'analytics' ? 'flex' : 'none', flex: 1, minHeight: 0, height: '100%', width: '100%', flexDirection: 'column' }}>
+          <AnalyticsView
+            files={files}
+            isActive={activeView === 'analytics'}
+          />
+        </div>
 
       </main>
 

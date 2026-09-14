@@ -20,6 +20,7 @@ if hasattr(starlette.requests.Request.form, "__kwdefaults__") and starlette.requ
 import similarity
 from app.services.alignment import match_columns_lexical
 from app.api.endpoints.baseline import router as baseline_router
+from app.api.endpoints.analytics import router as analytics_router
 
 app = FastAPI(title="SensorLens API")
 
@@ -32,8 +33,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount baseline and alignment endpoints
+# Mount baseline, alignment, and analytics endpoints
 app.include_router(baseline_router, prefix="/api")
+app.include_router(analytics_router, prefix="/api")
 
 # Global in-memory cache to store uploaded datasets during session
 # key: file_id -> { "name": str, "df": pd.DataFrame, "metadata": dict }

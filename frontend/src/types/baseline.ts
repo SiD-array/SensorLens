@@ -95,6 +95,17 @@ export interface CorridorViolationResult {
   violating_mask: boolean[];
 }
 
+export interface RunEvaluationSummary {
+  file_id: string;
+  file_name: string;
+  success: boolean;
+  error?: string;
+  evaluated_channels_count: number;
+  mean_violation_pct: number;
+  max_violation_pct: number;
+  verdict: 'PASS' | 'WARN' | 'DEFECT' | 'ERROR';
+}
+
 export interface BaselineEvaluationResponse {
   success: boolean;
   test_file_name: string;
@@ -107,4 +118,8 @@ export interface BaselineEvaluationResponse {
   missing_channels?: string[];
   extra_test_channels?: string[];
   error?: string;
+  is_batch?: boolean;
+  evaluations_by_run?: Record<string, BaselineEvaluationResponse>;
+  runs_summary?: RunEvaluationSummary[];
+  primary_run_id?: string;
 }

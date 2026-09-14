@@ -163,6 +163,7 @@ async def get_active_baseline():
 @router.post("/baseline/evaluate")
 async def evaluate_baseline_endpoint(
     test_file_id: Optional[str] = Form(None),
+    test_file_ids_json: Optional[str] = Form(None),
     test_file: Optional[UploadFile] = File(None),
     target_col: str = Form("FMC%"),
     k_sigma: float = Form(2.0),
@@ -172,7 +173,7 @@ async def evaluate_baseline_endpoint(
     mappings_json: Optional[str] = Form(None)
 ):
     """
-    Evaluates a test run against the active baseline profile.
+    Evaluates one or multiple test runs against the active baseline profile.
     Computes Corridor Violation %, Cumulative Absolute Deviation,
     and Pearson Slope Correlation. Supports column mappings from Column Alignment.
     """
@@ -202,38 +203,102 @@ async def evaluate_baseline_endpoint(
         except Exception:
             mappings = None
 
-    test_df = None
-    file_name = "Test_Run"
-
     from main import uploaded_files_cache
 
-    if test_file:
-        file_name = test_file.filename
-        content = await test_file.read()
-        if file_name.endswith((".xlsx", ".xls")):
-            test_df = pd.read_excel(io.BytesIO(content))
-        elif file_name.endswith(".csv"):
-            test_df = pd.read_csv(io.BytesIO(content))
-        test_df.columns = [str(c).strip() for c in test_df.columns]
-    elif test_file_id and test_file_id in uploaded_files_cache:
-        cached = uploaded_files_cache[test_file_id]
-        test_df = cached["df"]
-        file_name = cached["name"]
+    # Determine all test runs to evaluate
+    runs_to_eval = []
 
-    if test_df is None or test_df.empty:
+    if test_file:
+        fname = test_file.filename
+        content = await test_file.read()
+        if fname.endswith((".xlsx", ".xls")):
+            tdf = pd.read_excel(io.BytesIO(content))
+        elif fname.endswith(".csv"):
+            tdf = pd.read_csv(io.BytesIO(content))
+        else:
+            tdf = pd.DataFrame()
+        tdf.columns = [str(c).strip() for c in tdf.columns]
+        runs_to_eval.append({"id": "uploaded_test", "name": fname, "df": tdf})
+
+    if test_file_ids_json:
+        try:
+            parsed_ids = json.loads(test_file_ids_json)
+            if isinstance(parsed_ids, list):
+                for fid in parsed_ids:
+                    if fid in uploaded_files_cache:
+                        c = uploaded_files_cache[fid]
+                        runs_to_eval.append({"id": fid, "name": c["name"], "df": c["df"]})
+        except Exception:
+            pass
+
+    if not runs_to_eval and test_file_id and test_file_id in uploaded_files_cache:
+        c = uploaded_files_cache[test_file_id]
+        runs_to_eval.append({"id": test_file_id, "name": c["name"], "df": c["df"]})
+
+    if not runs_to_eval:
         raise HTTPException(status_code=400, detail="No test data provided or test file not found in cache.")
 
-    eval_result = evaluate_test_run_corridor(
-        test_df=test_df,
-        test_file_name=file_name,
-        baseline_profile=baseline_profile,
-        target_col=target_col,
-        k_sigma=k_sigma,
-        pct_margin=pct_margin,
-        mappings=mappings
-    )
+    evaluations_by_run = {}
+    runs_summary = []
 
-    if not eval_result.get("success", False):
-        raise HTTPException(status_code=400, detail=eval_result.get("error", "Evaluation failed"))
+    for r in runs_to_eval:
+        eval_result = evaluate_test_run_corridor(
+            test_df=r["df"],
+            test_file_name=r["name"],
+            baseline_profile=baseline_profile,
+            target_col=target_col,
+            k_sigma=k_sigma,
+            pct_margin=pct_margin,
+            mappings=mappings
+        )
 
-    return eval_result
+        evaluations_by_run[r["id"]] = eval_result
+
+        if eval_result.get("success", False):
+            ch_evals = eval_result.get("channel_evaluations", {})
+            v_pcts = [item["violation_pct"] for item in ch_evals.values()] if ch_evals else [0.0]
+            mean_v = round(float(np.mean(v_pcts)), 2) if v_pcts else 0.0
+            max_v = round(float(np.max(v_pcts)), 2) if v_pcts else 0.0
+            verdict = "PASS" if mean_v < 5.0 else ("WARN" if mean_v < 15.0 else "DEFECT")
+
+            runs_summary.append({
+                "file_id": r["id"],
+                "file_name": r["name"],
+                "success": True,
+                "evaluated_channels_count": len(ch_evals),
+                "mean_violation_pct": mean_v,
+                "max_violation_pct": max_v,
+                "verdict": verdict
+            })
+        else:
+            runs_summary.append({
+                "file_id": r["id"],
+                "file_name": r["name"],
+                "success": False,
+                "error": eval_result.get("error", "Evaluation failed"),
+                "evaluated_channels_count": 0,
+                "mean_violation_pct": 0.0,
+                "max_violation_pct": 0.0,
+                "verdict": "ERROR"
+            })
+
+    # Pick primary run (first successful run, or first run)
+    primary_id = runs_to_eval[0]["id"]
+    for s in runs_summary:
+        if s["success"]:
+            primary_id = s["file_id"]
+            break
+
+    primary_eval = evaluations_by_run.get(primary_id, {})
+
+    if not primary_eval.get("success", False) and len(runs_to_eval) == 1:
+        raise HTTPException(status_code=400, detail=primary_eval.get("error", "Evaluation failed"))
+
+    # Return unified response with backward compatibility + batch structures
+    response = dict(primary_eval)
+    response["is_batch"] = len(runs_to_eval) > 1
+    response["evaluations_by_run"] = evaluations_by_run
+    response["runs_summary"] = runs_summary
+    response["primary_run_id"] = primary_id
+
+    return response

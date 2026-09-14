@@ -2,7 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { 
   Upload, Sliders, Activity, RefreshCw, BarChart2, 
-  ArrowDown, ArrowUp, Lightbulb, CheckCircle2, AlertTriangle, Trash2
+  ArrowDown, ArrowUp, Lightbulb, CheckCircle2, AlertTriangle, Trash2,
+  Layers, ListFilter
 } from 'lucide-react';
 import type { 
   TestFile, BaselineProfile, BaselineEvaluationResponse 
@@ -22,9 +23,14 @@ const STORAGE_KEYS = {
   K_SIGMA: 'sensorlens_baseline_k_sigma',
   PCT_MARGIN: 'sensorlens_baseline_pct_margin',
   TEST_ID: 'sensorlens_baseline_test_id',
+  TEST_IDS: 'sensorlens_baseline_test_ids',
   EVAL_CH: 'sensorlens_baseline_eval_ch',
+  EVAL_CHS: 'sensorlens_baseline_eval_channels',
   REF_NAMES: 'sensorlens_baseline_ref_names'
 };
+
+const SENSOR_PALETTE = ['#00f2fe', '#818cf8', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#3b82f6', '#14b8a6', '#f43f5e', '#a855f7', '#06b6d4', '#eab308'];
+const RUN_PALETTE = ['#00f2fe', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#3b82f6', '#38bdf8', '#fbbf24', '#f43f5e', '#a855f7'];
 
 function getSessionItem<T>(key: string, fallback: T): T {
   try {
@@ -45,7 +51,7 @@ function setSessionItem<T>(key: string, value: T): void {
 }
 
 export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, mappings, isActive }) => {
-  // Guide banner toggle (off by default so user sees clean workbench immediately)
+  // Guide banner toggle
   const [showGuide, setShowGuide] = useState(false);
 
   // Config
@@ -72,9 +78,12 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
     getSessionItem(STORAGE_KEYS.PROFILE, null)
   );
 
-  // Test Run Evaluation
+  // Test Run Evaluation (Single & Multi-Test support)
   const [selectedTestFileId, setSelectedTestFileId] = useState<string>(() => 
     getSessionItem(STORAGE_KEYS.TEST_ID, '')
+  );
+  const [selectedTestFileIds, setSelectedTestFileIds] = useState<string[]>(() => 
+    getSessionItem(STORAGE_KEYS.TEST_IDS, [])
   );
   const [selectedTestFile, setSelectedTestFile] = useState<File | null>(null);
   const [isEvaluating, setIsEvaluating] = useState(false);
@@ -82,9 +91,17 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
   const [evaluationResult, setEvaluationResult] = useState<BaselineEvaluationResponse | null>(() => 
     getSessionItem(STORAGE_KEYS.EVAL, null)
   );
+
+  // Channel Selection (Single focus & Multi-channel support)
   const [selectedEvalChannel, setSelectedEvalChannel] = useState<string>(() => 
     getSessionItem(STORAGE_KEYS.EVAL_CH, '')
   );
+  const [selectedEvalChannels, setSelectedEvalChannels] = useState<string[]>(() => 
+    getSessionItem(STORAGE_KEYS.EVAL_CHS, [])
+  );
+
+  // Batch Test Run Switcher Tab ('all' or specific file_id)
+  const [activeBatchRunId, setActiveBatchRunId] = useState<string>('all');
 
   const multiFileInputRef = useRef<HTMLInputElement>(null);
   const testFileInputRef = useRef<HTMLInputElement>(null);
@@ -130,12 +147,20 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
   }, [selectedTestFileId]);
 
   useEffect(() => {
+    setSessionItem(STORAGE_KEYS.TEST_IDS, selectedTestFileIds);
+  }, [selectedTestFileIds]);
+
+  useEffect(() => {
     setSessionItem(STORAGE_KEYS.EVAL, evaluationResult);
   }, [evaluationResult]);
 
   useEffect(() => {
     setSessionItem(STORAGE_KEYS.EVAL_CH, selectedEvalChannel);
   }, [selectedEvalChannel]);
+
+  useEffect(() => {
+    setSessionItem(STORAGE_KEYS.EVAL_CHS, selectedEvalChannels);
+  }, [selectedEvalChannels]);
 
   const handleResetEngine = () => {
     setBaselineProfile(null);
@@ -144,8 +169,11 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
     setRefFilesList([]);
     setRefFileNames([]);
     setSelectedTestFileId('');
+    setSelectedTestFileIds([]);
     setSelectedTestFile(null);
     setSelectedEvalChannel('');
+    setSelectedEvalChannels([]);
+    setActiveBatchRunId('all');
     Object.values(STORAGE_KEYS).forEach(k => sessionStorage.removeItem(k));
   };
 
@@ -160,12 +188,65 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
     if (e.target.files && e.target.files.length > 0) {
       setSelectedTestFile(e.target.files[0]);
       setSelectedTestFileId('');
+      setSelectedTestFileIds([]);
       setEvalError(null);
     }
   };
 
   const removeSelectedFile = (idx: number) => {
     setRefFilesList(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const toggleEvalChannel = (chName: string) => {
+    setSelectedEvalChannels(prev => {
+      const next = prev.includes(chName) ? prev.filter(c => c !== chName) : [...prev, chName];
+      if (next.length === 1) {
+        setSelectedEvalChannel(next[0]);
+      } else if (!next.includes(selectedEvalChannel) && next.length > 0) {
+        setSelectedEvalChannel(next[0]);
+      }
+      return next;
+    });
+  };
+
+  const selectAllChannels = () => {
+    if (!baselineProfile) return;
+    const all = baselineProfile.availability_matrix.map(r => r.channel_name);
+    setSelectedEvalChannels(all);
+    if (!selectedEvalChannel && all.length > 0) {
+      setSelectedEvalChannel(all[0]);
+    }
+  };
+
+  const clearAllChannels = () => {
+    setSelectedEvalChannels([]);
+  };
+
+  const toggleTestFileId = (fId: string) => {
+    setSelectedTestFile(null);
+    setSelectedTestFileIds(prev => {
+      const exists = prev.includes(fId);
+      const next = exists ? prev.filter(id => id !== fId) : [...prev, fId];
+      if (next.length === 1) {
+        setSelectedTestFileId(next[0]);
+      } else {
+        setSelectedTestFileId(next[0] || '');
+      }
+      return next;
+    });
+  };
+
+  const selectAllTests = () => {
+    setSelectedTestFile(null);
+    const allIds = files.map(f => f.id);
+    setSelectedTestFileIds(allIds);
+    if (allIds.length > 0) setSelectedTestFileId(allIds[0]);
+  };
+
+  const clearAllTests = () => {
+    setSelectedTestFile(null);
+    setSelectedTestFileIds([]);
+    setSelectedTestFileId('');
   };
 
   // Build Baseline Endpoint Call
@@ -198,7 +279,11 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
 
       // Auto select first channel for evaluation view
       if (data.availability_matrix && data.availability_matrix.length > 0) {
-        setSelectedEvalChannel(data.availability_matrix[0].channel_name);
+        const firstCh = data.availability_matrix[0].channel_name;
+        setSelectedEvalChannel(firstCh);
+        if (selectedEvalChannels.length === 0) {
+          setSelectedEvalChannels([firstCh]);
+        }
       }
     } catch (e: any) {
       console.error('Failed to build multi-reference baseline:', e);
@@ -208,9 +293,10 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
     }
   };
 
-  // Evaluate Test Run against Baseline
+  // Evaluate Test Run(s) against Baseline
   const handleEvaluateTestRun = async () => {
-    if (!baselineProfile || (!selectedTestFileId && !selectedTestFile)) return;
+    const hasTest = selectedTestFile || selectedTestFileIds.length > 0 || selectedTestFileId;
+    if (!baselineProfile || !hasTest) return;
     setIsEvaluating(true);
     setEvalError(null);
 
@@ -218,9 +304,15 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
       const formData = new FormData();
       if (selectedTestFile) {
         formData.append('test_file', selectedTestFile);
+      } else if (selectedTestFileIds.length > 1) {
+        formData.append('test_file_ids_json', JSON.stringify(selectedTestFileIds));
+        formData.append('test_file_id', selectedTestFileIds[0]);
+      } else if (selectedTestFileIds.length === 1) {
+        formData.append('test_file_id', selectedTestFileIds[0]);
       } else if (selectedTestFileId) {
         formData.append('test_file_id', selectedTestFileId);
       }
+
       formData.append('target_col', targetCol);
       formData.append('k_sigma', kSigma.toString());
       if (pctMargin > 0) {
@@ -245,6 +337,7 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
       }
       const data: BaselineEvaluationResponse = await res.json();
       setEvaluationResult(data);
+      setActiveBatchRunId('all');
 
       if (data.channel_evaluations) {
         const availableChs = Object.keys(data.channel_evaluations);
@@ -260,102 +353,238 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
     }
   };
 
-  // ECharts Option for Shaded Tolerance Corridor with Red Violation Highlights
+  // ECharts Option for Shaded Tolerance Corridor with Multi-Sensor & Multi-Test Overlays
   const getCorridorChartOption = () => {
-    if (!baselineProfile || !selectedEvalChannel) return {};
+    if (!baselineProfile) return {};
 
-    const baseChannel = baselineProfile.baseline_channels[selectedEvalChannel];
-    if (!baseChannel) return {};
+    const activeChannels = selectedEvalChannels.length > 0 
+      ? selectedEvalChannels 
+      : (selectedEvalChannel ? [selectedEvalChannel] : []);
+
+    if (activeChannels.length === 0) return {};
 
     const grid = baselineProfile.grid;
-    const mu = baseChannel.mean;
-    const sigma = baseChannel.std;
+    const isSingleChannel = activeChannels.length === 1;
+    const primaryCh = activeChannels[0];
+    const seriesList: any[] = [];
 
-    // Corridor bounds
-    const lowerBound: number[] = [];
-    const bandWidth: number[] = [];
-    const meanPoints = mu.map((val, idx) => [grid[idx], val]);
+    if (isSingleChannel) {
+      // Single channel mode: Draw shaded corridor (±kσ), baseline mean (μ), and all test traces
+      const baseChannel = baselineProfile.baseline_channels[primaryCh];
+      if (baseChannel) {
+        const mu = baseChannel.mean;
+        const sigma = baseChannel.std;
 
-    for (let i = 0; i < grid.length; i++) {
-      const halfWidth = Math.max(kSigma * sigma[i], (pctMargin / 100.0) * Math.max(Math.abs(mu[i]), 1.0));
-      const low = mu[i] - halfWidth;
-      const high = mu[i] + halfWidth;
-      lowerBound.push(low);
-      bandWidth.push(high - low);
-    }
+        const lowerBound: number[] = [];
+        const bandWidth: number[] = [];
+        const meanPoints = mu.map((val, idx) => [grid[idx], val]);
 
-    const seriesList: any[] = [
-      // Lower bound (transparent base for confidence area)
-      {
-        name: 'Lower Corridor Base',
-        type: 'line',
-        data: lowerBound.map((val, idx) => [grid[idx], val]),
-        lineStyle: { opacity: 0 },
-        stack: 'confidence-band',
-        symbol: 'none',
-        silent: true
-      },
-      // Shaded corridor area (stacked on top of lower base)
-      {
-        name: 'Tolerance Corridor (kσ)',
-        type: 'line',
-        data: bandWidth.map((val, idx) => [grid[idx], val]),
-        lineStyle: { opacity: 0 },
-        areaStyle: {
-          color: 'rgba(99, 102, 241, 0.22)'
-        },
-        stack: 'confidence-band',
-        symbol: 'none'
-      },
-      // Baseline Mean Line
-      {
-        name: 'Baseline Mean (μ)',
-        type: 'line',
-        data: meanPoints,
-        lineStyle: { width: 3, color: '#818cf8' },
-        itemStyle: { color: '#818cf8' },
-        smooth: true,
-        symbol: 'none',
-        emphasis: { focus: 'series' }
-      }
-    ];
+        for (let i = 0; i < grid.length; i++) {
+          const halfWidth = Math.max(kSigma * sigma[i], (pctMargin / 100.0) * Math.max(Math.abs(mu[i]), 1.0));
+          const low = mu[i] - halfWidth;
+          const high = mu[i] + halfWidth;
+          lowerBound.push(low);
+          bandWidth.push(high - low);
+        }
 
-    // If test run evaluation exists for this channel, overlay it and red violations
-    if (evaluationResult && evaluationResult.channel_evaluations[selectedEvalChannel]) {
-      const evalCh = evaluationResult.channel_evaluations[selectedEvalChannel];
-      const testPoints = evalCh.test_values.map((val, idx) => [grid[idx], val]);
-
-      // Normal test trace
-      seriesList.push({
-        name: `Test: ${evaluationResult.test_file_name}`,
-        type: 'line',
-        data: testPoints,
-        lineStyle: { width: 2.5, color: '#00f2fe' },
-        itemStyle: { color: '#00f2fe' },
-        smooth: true,
-        symbol: 'none',
-        emphasis: { focus: 'series' }
-      });
-
-      // Violating points in RED
-      const violatingPoints = evalCh.test_values
-        .map((val, idx) => evalCh.violating_mask[idx] ? [grid[idx], val] : null)
-        .filter(Boolean);
-
-      if (violatingPoints.length > 0) {
+        // Lower bound (transparent base)
         seriesList.push({
-          name: 'Corridor Violations',
-          type: 'scatter',
-          data: violatingPoints,
-          symbolSize: 6,
-          itemStyle: {
-            color: '#ef4444',
-            shadowColor: '#ef4444',
-            shadowBlur: 8
+          name: 'Lower Corridor Base',
+          type: 'line',
+          data: lowerBound.map((val, idx) => [grid[idx], val]),
+          lineStyle: { opacity: 0 },
+          stack: 'confidence-band',
+          symbol: 'none',
+          silent: true
+        });
+
+        // Shaded corridor area
+        seriesList.push({
+          name: 'Tolerance Corridor (kσ)',
+          type: 'line',
+          data: bandWidth.map((val, idx) => [grid[idx], val]),
+          lineStyle: { opacity: 0 },
+          areaStyle: {
+            color: 'rgba(99, 102, 241, 0.22)'
           },
+          stack: 'confidence-band',
+          symbol: 'none'
+        });
+
+        // Baseline Mean Line
+        seriesList.push({
+          name: `Baseline Mean (μ) [${primaryCh}]`,
+          type: 'line',
+          data: meanPoints,
+          lineStyle: { width: 3, color: '#818cf8' },
+          itemStyle: { color: '#818cf8' },
+          smooth: true,
+          symbol: 'none',
           emphasis: { focus: 'series' }
         });
       }
+
+      // Add Test Run Trace(s)
+      if (evaluationResult) {
+        if (evaluationResult.evaluations_by_run && Object.keys(evaluationResult.evaluations_by_run).length > 0) {
+          // Batch runs available
+          const runEntries = Object.entries(evaluationResult.evaluations_by_run);
+          runEntries.forEach(([runId, runEval], runIdx) => {
+            if (activeBatchRunId !== 'all' && activeBatchRunId !== runId) return;
+
+            const chEval = runEval.channel_evaluations?.[primaryCh];
+            if (!chEval) return;
+
+            const color = RUN_PALETTE[runIdx % RUN_PALETTE.length];
+            const testPoints = chEval.test_values.map((val, idx) => [grid[idx], val]);
+
+            seriesList.push({
+              name: `Test: ${runEval.test_file_name}`,
+              type: 'line',
+              data: testPoints,
+              lineStyle: { width: 2.2, color },
+              itemStyle: { color },
+              smooth: true,
+              symbol: 'none',
+              emphasis: { focus: 'series' }
+            });
+
+            // Violations
+            const violatingPoints = chEval.test_values
+              .map((val, idx) => chEval.violating_mask[idx] ? [grid[idx], val] : null)
+              .filter(Boolean);
+
+            if (violatingPoints.length > 0) {
+              seriesList.push({
+                name: `Violations (${runEval.test_file_name})`,
+                type: 'scatter',
+                data: violatingPoints,
+                symbolSize: 6,
+                itemStyle: { color: '#ef4444', shadowColor: '#ef4444', shadowBlur: 6 },
+                emphasis: { focus: 'series' }
+              });
+            }
+          });
+        } else if (evaluationResult.channel_evaluations?.[primaryCh]) {
+          // Single test run
+          const chEval = evaluationResult.channel_evaluations[primaryCh];
+          const testPoints = chEval.test_values.map((val, idx) => [grid[idx], val]);
+
+          seriesList.push({
+            name: `Test: ${evaluationResult.test_file_name}`,
+            type: 'line',
+            data: testPoints,
+            lineStyle: { width: 2.5, color: '#00f2fe' },
+            itemStyle: { color: '#00f2fe' },
+            smooth: true,
+            symbol: 'none',
+            emphasis: { focus: 'series' }
+          });
+
+          const violatingPoints = chEval.test_values
+            .map((val, idx) => chEval.violating_mask[idx] ? [grid[idx], val] : null)
+            .filter(Boolean);
+
+          if (violatingPoints.length > 0) {
+            seriesList.push({
+              name: 'Corridor Violations',
+              type: 'scatter',
+              data: violatingPoints,
+              symbolSize: 6,
+              itemStyle: { color: '#ef4444', shadowColor: '#ef4444', shadowBlur: 8 },
+              emphasis: { focus: 'series' }
+            });
+          }
+        }
+      }
+    } else {
+      // Multi-channel mode: Overlay each sensor's Baseline Mean and Test Traces
+      activeChannels.forEach((chName, chIdx) => {
+        const chColor = SENSOR_PALETTE[chIdx % SENSOR_PALETTE.length];
+        const baseChannel = baselineProfile.baseline_channels[chName];
+
+        if (baseChannel) {
+          const meanPoints = baseChannel.mean.map((val, idx) => [grid[idx], val]);
+          seriesList.push({
+            name: `Baseline μ: ${chName}`,
+            type: 'line',
+            data: meanPoints,
+            lineStyle: { width: 2.5, color: chColor, type: 'dashed' },
+            itemStyle: { color: chColor },
+            smooth: true,
+            symbol: 'none',
+            emphasis: { focus: 'series' }
+          });
+        }
+
+        // Test run trace for this channel
+        if (evaluationResult) {
+          if (evaluationResult.evaluations_by_run && Object.keys(evaluationResult.evaluations_by_run).length > 0) {
+            Object.entries(evaluationResult.evaluations_by_run).forEach(([runId, runEval]) => {
+              if (activeBatchRunId !== 'all' && activeBatchRunId !== runId) return;
+
+              const chEval = runEval.channel_evaluations?.[chName];
+              if (!chEval) return;
+
+              const testPoints = chEval.test_values.map((val, idx) => [grid[idx], val]);
+              seriesList.push({
+                name: `${runEval.test_file_name}: ${chName}`,
+                type: 'line',
+                data: testPoints,
+                lineStyle: { width: 2, color: chColor },
+                itemStyle: { color: chColor },
+                smooth: true,
+                symbol: 'none',
+                emphasis: { focus: 'series' }
+              });
+
+              // Red scatter points for violations
+              const violatingPoints = chEval.test_values
+                .map((val, idx) => chEval.violating_mask[idx] ? [grid[idx], val] : null)
+                .filter(Boolean);
+
+              if (violatingPoints.length > 0) {
+                seriesList.push({
+                  name: `Violations (${chName})`,
+                  type: 'scatter',
+                  data: violatingPoints,
+                  symbolSize: 5,
+                  itemStyle: { color: '#ef4444' },
+                  emphasis: { focus: 'series' }
+                });
+              }
+            });
+          } else if (evaluationResult.channel_evaluations?.[chName]) {
+            const chEval = evaluationResult.channel_evaluations[chName];
+            const testPoints = chEval.test_values.map((val, idx) => [grid[idx], val]);
+            seriesList.push({
+              name: `Test: ${chName}`,
+              type: 'line',
+              data: testPoints,
+              lineStyle: { width: 2, color: chColor },
+              itemStyle: { color: chColor },
+              smooth: true,
+              symbol: 'none',
+              emphasis: { focus: 'series' }
+            });
+
+            const violatingPoints = chEval.test_values
+              .map((val, idx) => chEval.violating_mask[idx] ? [grid[idx], val] : null)
+              .filter(Boolean);
+
+            if (violatingPoints.length > 0) {
+              seriesList.push({
+                name: `Violations (${chName})`,
+                type: 'scatter',
+                data: violatingPoints,
+                symbolSize: 5,
+                itemStyle: { color: '#ef4444' },
+                emphasis: { focus: 'series' }
+              });
+            }
+          }
+        }
+      });
     }
 
     return {
@@ -366,13 +595,48 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
       },
       legend: {
         data: seriesList.filter(s => s.name !== 'Lower Corridor Base').map(s => s.name),
-        textStyle: { color: '#ccc' },
+        textStyle: { color: '#ccc', fontSize: 11 },
+        type: 'scroll',
         top: 0
       },
-      grid: { left: '4%', right: '4%', bottom: '15%', top: '15%', containLabel: true },
+      toolbox: {
+        feature: {
+          dataZoom: {
+            yAxisIndex: 'all',
+            xAxisIndex: 'all',
+            title: { zoom: 'Area Zoom (X+Y)', back: 'Restore Zoom' }
+          },
+          restore: { title: 'Reset View' }
+        },
+        iconStyle: { borderColor: '#00f2fe' },
+        right: '4%',
+        top: 0
+      },
+      grid: { left: '4%', right: '5%', bottom: '15%', top: '15%', containLabel: true },
       dataZoom: [
-        { type: 'slider', show: true, textStyle: { color: '#aaa' }, bottom: '2%' },
-        { type: 'inside' }
+        {
+          type: 'slider',
+          show: true,
+          xAxisIndex: 0,
+          textStyle: { color: '#aaa' },
+          bottom: '2%',
+          borderColor: 'rgba(255, 255, 255, 0.1)',
+          fillerColor: 'rgba(0, 242, 254, 0.15)',
+          handleStyle: { color: '#00f2fe' }
+        },
+        { type: 'inside', xAxisIndex: 0 },
+        {
+          type: 'slider',
+          show: true,
+          yAxisIndex: 0,
+          right: '1%',
+          width: 18,
+          textStyle: { color: '#aaa' },
+          borderColor: 'rgba(255, 255, 255, 0.1)',
+          fillerColor: 'rgba(99, 102, 241, 0.2)',
+          handleStyle: { color: '#818cf8' }
+        },
+        { type: 'inside', yAxisIndex: 0 }
       ],
       xAxis: {
         type: 'value',
@@ -394,6 +658,8 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
   };
 
   const currentEvalMetrics = evaluationResult?.channel_evaluations?.[selectedEvalChannel];
+  const isMultiSensor = selectedEvalChannels.length > 1;
+  const isBatchMode = Boolean(evaluationResult?.is_batch && evaluationResult?.runs_summary && evaluationResult.runs_summary.length > 0);
 
   return (
     <div className="baseline-workbench">
@@ -414,66 +680,62 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
                 <span className="concept-badge">1. Cycle Progress (0% → 100%)</span>
                 <h4>Why not compare by seconds?</h4>
                 <p>
-                  Cycles naturally run faster or slower depending on ambient temperature or load size. Comparing clock seconds gives false alarms.
-                  We resample all runs onto a uniform <b>0% to 100% Progress Scale</b> (e.g. moisture drop <code>FMC%</code>) to compare identical physical stages.
+                  Drying or heating cycles naturally vary in duration. Comparing cycles by elapsed seconds causes false errors when one run takes slightly longer. SensorLens resamples sensor readings against <b>Cycle Progress (FMC% or Temperature)</b> onto a uniform 500-point grid.
                 </p>
               </div>
 
               <div className="concept-card">
-                <span className="concept-badge">2. Golden Standard (Mean μ)</span>
-                <h4>Average of healthy reference runs</h4>
+                <span className="concept-badge">2. Golden Baseline (Mean μ)</span>
+                <h4>The True Golden Curve</h4>
                 <p>
-                  Upload multiple known-good runs. The engine calculates the true average waveform (<b>Mean μ</b>) to create a noise-free benchmark.
+                  SensorLens computes the mathematical mean across all healthy reference runs at each step of the cycle, giving the true reference trajectory.
                 </p>
               </div>
 
               <div className="concept-card">
-                <span className="concept-badge">3. Tolerance Guardrails (kσ)</span>
-                <h4>Catch defects in bright red</h4>
+                <span className="concept-badge">3. Multi-Sensor & Batch Verification</span>
+                <h4>Diagnose Multiple Sensors & Test Runs</h4>
                 <p>
-                  The blue shaded envelope represents normal operating boundaries. Any test point outside these guardrails is flagged in <b>bright red</b>.
+                  Select multiple sensors to overlay their responses on a unified progress axis, and select multiple test runs to perform automated batch verification against your golden baseline in a single click.
                 </p>
               </div>
+            </div>
+            <div className="concept-modal-footer">
+              <button onClick={() => setShowGuide(false)} className="btn btn-primary">
+                Got it, let's analyze!
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Left Sidebar (350px): All Inputs, Files, Availability Matrix, Evaluation */}
+      {/* Left Sidebar: Controls & Selection Matrices */}
       <aside className="baseline-sidebar">
-        <div className="sidebar-header-bar">
+        <div className="sidebar-header">
           <div className="sidebar-title-row">
             <Sliders size={16} className="text-accent-cyan" />
-            <span className="sidebar-title">Baseline Controller</span>
+            <h2>Baseline Controller</h2>
           </div>
-          <div className="sidebar-header-actions" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            {(baselineProfile || evaluationResult || refFilesList.length > 0) && (
-              <button 
-                onClick={handleResetEngine}
-                className="btn-clear-baseline"
-                title="Reset baseline profile, evaluation data, and calculations"
-              >
-                <Trash2 size={12} />
-                <span>Clear</span>
-              </button>
-            )}
-            <span className={`baseline-status-pill ${baselineProfile?.success ? 'active' : ''}`}>
-              {baselineProfile?.success ? 'Active' : 'Setup'}
-            </span>
-          </div>
+          <button 
+            onClick={handleResetEngine} 
+            className="btn-icon text-muted hover-red"
+            title="Reset All Baseline Data"
+          >
+            <Trash2 size={14} />
+          </button>
         </div>
 
-        <div className="sidebar-scrollable-body">
-          {/* Section 1: Ingestion & Config */}
+        <div className="sidebar-body">
+          {/* Section 1: Ingestion */}
           <div className="sidebar-section">
             <div className="section-label-row">
-              <span className="section-label">1. Reference Ingestion</span>
+              <span className="section-label">1. Reference Runs (Baseline Ingestion)</span>
               <button 
                 onClick={() => multiFileInputRef.current?.click()}
                 className="btn-select-files"
               >
                 <Upload size={12} />
-                <span>Select Files ({refFilesList.length})</span>
+                <span>Add Files</span>
               </button>
               <input 
                 type="file" 
@@ -485,47 +747,50 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
               />
             </div>
 
+            {/* Reference Files Pill Container */}
             {refFilesList.length > 0 ? (
               <div className="sidebar-files-pills">
-                {refFilesList.map((f, idx) => (
-                  <span key={idx} className="sidebar-file-chip">
+                {refFilesList.map((f, i) => (
+                  <span key={i} className="sidebar-file-chip">
                     <span className="chip-name" title={f.name}>{f.name}</span>
-                    <button onClick={() => removeSelectedFile(idx)} className="chip-remove">×</button>
+                    <button onClick={() => removeSelectedFile(i)} className="chip-remove">×</button>
                   </span>
                 ))}
               </div>
-            ) : refFileNames.length > 0 && baselineProfile ? (
-              <div className="sidebar-files-pills active-ref-summary">
-                <span className="active-ref-label">Active Baseline Built From:</span>
-                {refFileNames.map((name, idx) => (
-                  <span key={idx} className="sidebar-file-chip persisted">
-                    <span className="chip-name" title={name}>{name}</span>
+            ) : refFileNames.length > 0 ? (
+              <div className="sidebar-files-pills">
+                {refFileNames.map((name, i) => (
+                  <span key={i} className="sidebar-file-chip loaded">
+                    <span className="chip-name" title={name}>✓ {name}</span>
                   </span>
                 ))}
               </div>
             ) : (
-              <div className="sidebar-files-empty">
-                No files queued. Click "Select Files" to queue 2+ reference runs.
+              <div 
+                onClick={() => multiFileInputRef.current?.click()}
+                className="sidebar-empty-box"
+              >
+                <Upload size={18} style={{ opacity: 0.5, marginBottom: '4px' }} />
+                <span>Select 2+ healthy run files</span>
               </div>
             )}
 
-            {/* Cycle Progress Sensor Input */}
+            {/* Normalization Target Column */}
             <div className="sidebar-field-group">
               <label className="field-label">Cycle Progress Sensor:</label>
               <input 
                 type="text" 
                 value={targetCol}
                 onChange={(e) => setTargetCol(e.target.value)}
-                placeholder="e.g. FMC%, Moisture, Progress%"
+                placeholder="e.g. FMC% or Temperature"
                 className="field-input"
               />
-              <span className="field-hint">Defaults to <b>FMC%</b> (drying moisture).</span>
             </div>
 
             {/* Cycle Direction Toggle */}
             <div className="sidebar-field-group">
               <label className="field-label">Cycle Direction:</label>
-              <div className="sidebar-toggle-group">
+              <div className="toggle-btn-group">
                 <button 
                   onClick={() => setDirection('downward')}
                   className={`toggle-btn-sm ${direction === 'downward' ? 'active' : ''}`}
@@ -600,31 +865,50 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
             </div>
           )}
 
-          {/* Section 2: Availability Matrix (When generated) */}
+          {/* Section 2: Schema Availability Matrix (Multi-Sensor Select) */}
           {baselineProfile && baselineProfile.success && (
             <>
               <div className="sidebar-divider" />
 
               <div className="sidebar-section">
                 <div className="section-label-row">
-                  <span className="section-label">2. Schema Availability Matrix</span>
-                  <span className="matrix-count-badge">{baselineProfile.availability_matrix.length} ch</span>
+                  <span className="section-label">2. Sensor Selection</span>
+                  <div className="selection-quick-actions">
+                    <button onClick={selectAllChannels} className="btn-text-sm" title="Select All Channels">All</button>
+                    <button onClick={clearAllChannels} className="btn-text-sm" title="Deselect All">None</button>
+                    <span className="matrix-count-badge">
+                      {selectedEvalChannels.length}/{baselineProfile.availability_matrix.length}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="sidebar-matrix-list">
                   {baselineProfile.availability_matrix.map(row => {
-                    const isSelected = selectedEvalChannel === row.channel_name;
+                    const isChecked = selectedEvalChannels.includes(row.channel_name);
+                    const isFocused = selectedEvalChannel === row.channel_name;
                     const evalCh = evaluationResult?.channel_evaluations?.[row.channel_name];
                     const isMissingInTest = evaluationResult && evaluationResult.channel_evaluations && !evalCh;
 
                     return (
                       <div 
                         key={row.channel_name}
-                        onClick={() => setSelectedEvalChannel(row.channel_name)}
-                        className={`matrix-item-row ${isSelected ? 'selected' : ''} ${isMissingInTest ? 'channel-missing-row' : ''}`}
+                        onClick={() => {
+                          setSelectedEvalChannel(row.channel_name);
+                          if (!isChecked) toggleEvalChannel(row.channel_name);
+                        }}
+                        className={`matrix-item-row ${isFocused ? 'selected' : ''} ${isMissingInTest ? 'channel-missing-row' : ''}`}
                       >
                         <div className="matrix-item-left">
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={(e) => {
+                                e.stopPropagation();
+                                toggleEvalChannel(row.channel_name);
+                              }}
+                              className="matrix-checkbox"
+                            />
                             <span className="matrix-item-name" title={row.channel_name}>{row.channel_name}</span>
                             {evalCh && (
                               <span className="matrix-status-pill evaluated" title={`Evaluated with test channel: ${evalCh.matched_test_col || row.channel_name}`}>
@@ -654,10 +938,17 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
 
               <div className="sidebar-divider" />
 
-              {/* Section 3: Verify Test Run */}
+              {/* Section 3: Verify Test Run(s) (Multi-Test Run Select) */}
               <div className="sidebar-section">
                 <div className="section-label-row">
-                  <span className="section-label">3. Verify Test Appliance</span>
+                  <span className="section-label">3. Verify Test Runs</span>
+                  <div className="selection-quick-actions">
+                    <button onClick={selectAllTests} className="btn-text-sm" title="Select All Uploaded Runs">All</button>
+                    <button onClick={clearAllTests} className="btn-text-sm" title="Clear Selection">Clear</button>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
                   <button 
                     onClick={() => testFileInputRef.current?.click()}
                     className="btn-select-files"
@@ -679,25 +970,33 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
                   <div className="sidebar-files-pills">
                     <span className="sidebar-file-chip">
                       <span className="chip-name" title={selectedTestFile.name}>
-                        Testing: <b>{selectedTestFile.name}</b>
+                        Custom File: <b>{selectedTestFile.name}</b>
                       </span>
                       <button onClick={() => setSelectedTestFile(null)} className="chip-remove">×</button>
                     </span>
                   </div>
+                ) : files.length > 0 ? (
+                  <div className="test-selection-list">
+                    {files.map(f => {
+                      const isChecked = selectedTestFileIds.includes(f.id);
+                      return (
+                        <label key={f.id} className={`test-selection-item ${isChecked ? 'checked' : ''}`}>
+                          <input 
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => toggleTestFileId(f.id)}
+                            className="test-checkbox"
+                          />
+                          <span className="test-file-title" title={f.name}>{f.name}</span>
+                          <span className="test-file-ch-tag">{f.columns.length} ch</span>
+                        </label>
+                      );
+                    })}
+                  </div>
                 ) : (
-                  <select 
-                    value={selectedTestFileId}
-                    onChange={(e) => {
-                      setSelectedTestFileId(e.target.value);
-                      setSelectedTestFile(null);
-                    }}
-                    className="field-select"
-                  >
-                    <option value="">-- Choose From Uploaded Runs --</option>
-                    {files.map(f => (
-                      <option key={f.id} value={f.id}>{f.name} ({f.columns.length} ch)</option>
-                    ))}
-                  </select>
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                    No files loaded in workspace. Upload a file above to test.
+                  </span>
                 )}
 
                 {evalError && (
@@ -712,11 +1011,15 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
 
                 <button 
                   onClick={handleEvaluateTestRun}
-                  disabled={isEvaluating || (!selectedTestFileId && !selectedTestFile)}
+                  disabled={isEvaluating || (!selectedTestFile && selectedTestFileIds.length === 0 && !selectedTestFileId)}
                   className="btn btn-accent btn-verify-test"
                 >
                   {isEvaluating ? <RefreshCw className="animate-spin" size={13} /> : <Activity size={13} />}
-                  <span>Verify Against Baseline</span>
+                  <span>
+                    {selectedTestFileIds.length > 1 
+                      ? `Verify ${selectedTestFileIds.length} Test Runs (Batch)` 
+                      : 'Verify Against Baseline'}
+                  </span>
                 </button>
               </div>
             </>
@@ -724,20 +1027,34 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
         </div>
       </aside>
 
-      {/* Right Main Stage: Toolbar + ECharts Canvas + Verdict Banner */}
+      {/* Right Main Stage: Toolbar + ECharts Canvas + Verdict Banner / Multi Scorecard */}
       <main className="baseline-main">
         {/* Stage Header Toolbar */}
         <div className="baseline-stage-toolbar">
           <div className="stage-toolbar-left">
-            {selectedEvalChannel ? (
+            {selectedEvalChannels.length > 1 ? (
+              <div className="channel-active-indicator">
+                <span className="channel-name">Multi-Sensor Overlay ({selectedEvalChannels.length} Sensors)</span>
+                <span className="channel-grid-tag">500-pt Progress Grid (±{kSigma}σ corridor)</span>
+                {evaluationResult && (
+                  <span className="channel-test-tag">
+                    {isBatchMode 
+                      ? `Batch: ${evaluationResult.runs_summary?.length} Test Runs` 
+                      : `Testing: ${evaluationResult.test_file_name}`}
+                  </span>
+                )}
+              </div>
+            ) : selectedEvalChannel ? (
               <div className="channel-active-indicator">
                 <span className="channel-name">{selectedEvalChannel}</span>
                 <span className="channel-grid-tag">500-pt Progress Grid (±{kSigma}σ corridor)</span>
                 {evaluationResult && (
                   evaluationResult.channel_evaluations?.[selectedEvalChannel] ? (
-                    <span className="channel-test-tag">Testing: {evaluationResult.test_file_name}</span>
+                    <span className="channel-test-tag">
+                      {isBatchMode ? `Batch (${evaluationResult.runs_summary?.length} runs)` : `Testing: ${evaluationResult.test_file_name}`}
+                    </span>
                   ) : (
-                    <span className="channel-test-tag missing-tag">Not recorded in {evaluationResult.test_file_name}</span>
+                    <span className="channel-test-tag missing-tag">Not recorded in test run</span>
                   )
                 )}
               </div>
@@ -747,6 +1064,30 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
           </div>
 
           <div className="stage-toolbar-right">
+            {/* Batch Run Switcher Tabs */}
+            {isBatchMode && evaluationResult?.runs_summary && (
+              <div className="batch-run-switcher">
+                <button
+                  onClick={() => setActiveBatchRunId('all')}
+                  className={`batch-tab ${activeBatchRunId === 'all' ? 'active' : ''}`}
+                >
+                  <Layers size={12} />
+                  <span>All Runs ({evaluationResult.runs_summary.length})</span>
+                </button>
+                {evaluationResult.runs_summary.map(r => (
+                  <button
+                    key={r.file_id}
+                    onClick={() => setActiveBatchRunId(r.file_id)}
+                    className={`batch-tab ${activeBatchRunId === r.file_id ? 'active' : ''} ${r.verdict.toLowerCase()}`}
+                    title={`${r.file_name}: ${r.verdict}`}
+                  >
+                    <span>{r.file_name.slice(0, 14)}</span>
+                    <span className={`batch-verdict-pill ${r.verdict.toLowerCase()}`}>{r.verdict}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
             <button onClick={() => setShowGuide(true)} className="btn-guide-toggle">
               <Lightbulb size={13} />
               <span>Concept Guide</span>
@@ -801,8 +1142,89 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
           )}
         </div>
 
-        {/* Stage Footer: Diagnostic Verdict Banner */}
-        {currentEvalMetrics ? (
+        {/* Stage Footer: Diagnostic Verdict Banner OR Multi-Sensor Scorecard Table */}
+        {(isMultiSensor || isBatchMode) && evaluationResult ? (
+          <div className="baseline-stage-footer multi-scorecard-footer">
+            <div className="multi-scorecard-header">
+              <div className="scorecard-title-box">
+                <ListFilter size={15} className="text-accent-cyan" />
+                <span className="scorecard-title">Multi-Channel & Batch Diagnostic Scorecard</span>
+              </div>
+              <span className="scorecard-subtitle">
+                Comprehensive tolerance evaluation across selected sensors and test runs
+              </span>
+            </div>
+
+            <div className="scorecard-table-scroll">
+              <table className="scorecard-table">
+                <thead>
+                  <tr>
+                    <th>Sensor Name</th>
+                    <th>Test Run</th>
+                    <th>Evaluation Verdict</th>
+                    <th>Corridor Violations</th>
+                    <th>CAD Severity</th>
+                    <th>Timing Sync</th>
+                    <th>Matched Test Channel</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {isBatchMode && evaluationResult.evaluations_by_run ? (
+                    Object.entries(evaluationResult.evaluations_by_run).flatMap(([runId, runEval]) => {
+                      if (activeBatchRunId !== 'all' && activeBatchRunId !== runId) return [];
+                      const targetChannels = selectedEvalChannels.length > 0 ? selectedEvalChannels : [selectedEvalChannel];
+                      return targetChannels.map(chName => {
+                        const m = runEval.channel_evaluations?.[chName];
+                        const verdict = !m ? 'MISSING' : m.violation_pct === 0 ? 'PASS' : m.violation_pct < 5 ? 'ACCEPTABLE' : m.violation_pct < 15 ? 'WARNING' : 'DEFECT';
+                        return (
+                          <tr key={`${runId}-${chName}`}>
+                            <td className="sensor-name-cell">
+                              <span className="sensor-dot" />
+                              <b>{chName}</b>
+                            </td>
+                            <td>{runEval.test_file_name}</td>
+                            <td>
+                              <span className={`scorecard-verdict-badge ${verdict.toLowerCase()}`}>
+                                {verdict}
+                              </span>
+                            </td>
+                            <td>{m ? `${m.violation_pct}%` : 'N/A'}</td>
+                            <td>{m ? m.cumulative_deviation.toFixed(1) : 'N/A'}</td>
+                            <td>{m ? `${(m.slope_correlation * 100).toFixed(0)}%` : 'N/A'}</td>
+                            <td className="text-muted">{m?.matched_test_col || '—'}</td>
+                          </tr>
+                        );
+                      });
+                    })
+                  ) : evaluationResult.channel_evaluations ? (
+                    (selectedEvalChannels.length > 0 ? selectedEvalChannels : [selectedEvalChannel]).map(chName => {
+                      const m = evaluationResult.channel_evaluations[chName];
+                      const verdict = !m ? 'MISSING' : m.violation_pct === 0 ? 'PASS' : m.violation_pct < 5 ? 'ACCEPTABLE' : m.violation_pct < 15 ? 'WARNING' : 'DEFECT';
+                      return (
+                        <tr key={chName}>
+                          <td className="sensor-name-cell">
+                            <span className="sensor-dot" />
+                            <b>{chName}</b>
+                          </td>
+                          <td>{evaluationResult.test_file_name}</td>
+                          <td>
+                            <span className={`scorecard-verdict-badge ${verdict.toLowerCase()}`}>
+                              {verdict}
+                            </span>
+                          </td>
+                          <td>{m ? `${m.violation_pct}%` : 'N/A'}</td>
+                          <td>{m ? m.cumulative_deviation.toFixed(1) : 'N/A'}</td>
+                          <td>{m ? `${(m.slope_correlation * 100).toFixed(0)}%` : 'N/A'}</td>
+                          <td className="text-muted">{m?.matched_test_col || '—'}</td>
+                        </tr>
+                      );
+                    })
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : currentEvalMetrics ? (
           <div className="baseline-stage-footer">
             <div className={`verdict-strip ${
               currentEvalMetrics.violation_pct === 0 ? 'pass' : 
@@ -818,9 +1240,9 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
                     {currentEvalMetrics.violation_pct === 0 
                       ? "PASS — Flawless Operation" 
                       : currentEvalMetrics.violation_pct < 5 
-                      ? `ACCEPTABLE — Normal Tolerance (${currentEvalMetrics.violation_pct}% deviation)`
+                      ? `ACCEPTABLE — Normal Tolerance (${currentEvalMetrics.violation_pct}% deviation)` 
                       : currentEvalMetrics.violation_pct < 15 
-                      ? `WARNING — Moderate Out-of-Bounds (${currentEvalMetrics.violation_pct}% drift)`
+                      ? `WARNING — Moderate Out-of-Bounds (${currentEvalMetrics.violation_pct}% drift)` 
                       : `DEFECT DETECTED — Severe Anomaly (${currentEvalMetrics.violation_pct}% out-of-bounds)`}
                   </span>
                   <span className="verdict-metrics-summary">

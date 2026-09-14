@@ -109,10 +109,44 @@ export const VisualReportView: React.FC<VisualReportViewProps> = ({
         type: 'scroll',
         top: 4
       },
-      grid: { left: '4%', right: '4%', bottom: '14%', top: '16%', containLabel: true },
+      toolbox: {
+        feature: {
+          dataZoom: {
+            yAxisIndex: 'all',
+            xAxisIndex: 'all',
+            title: { zoom: 'Area Zoom (X+Y)', back: 'Restore Zoom' }
+          },
+          restore: { title: 'Reset View' }
+        },
+        iconStyle: { borderColor: '#00f2fe' },
+        right: '5%',
+        top: 4
+      },
+      grid: { left: '4%', right: '5%', bottom: '14%', top: '16%', containLabel: true },
       dataZoom: [
-        { type: 'slider', show: true, textStyle: { color: '#aaa' }, bottom: '2%' },
-        { type: 'inside' }
+        {
+          type: 'slider',
+          show: true,
+          xAxisIndex: 0,
+          textStyle: { color: '#aaa' },
+          bottom: '2%',
+          borderColor: 'rgba(255, 255, 255, 0.1)',
+          fillerColor: 'rgba(0, 242, 254, 0.15)',
+          handleStyle: { color: '#00f2fe' }
+        },
+        { type: 'inside', xAxisIndex: 0 },
+        {
+          type: 'slider',
+          show: true,
+          yAxisIndex: 0,
+          right: '1%',
+          width: 18,
+          textStyle: { color: '#aaa' },
+          borderColor: 'rgba(255, 255, 255, 0.1)',
+          fillerColor: 'rgba(99, 102, 241, 0.2)',
+          handleStyle: { color: '#818cf8' }
+        },
+        { type: 'inside', yAxisIndex: 0 }
       ],
       xAxis: {
         type: 'value',
