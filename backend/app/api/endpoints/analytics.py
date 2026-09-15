@@ -76,12 +76,13 @@ async def calculate_correlations_endpoint(
     file_ids_json: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None),
     columns_json: Optional[str] = Form(None),
-    algorithm: Optional[str] = Form("all")
+    algorithm: Optional[str] = Form("all"),
+    target_col: Optional[str] = Form(None)
 ):
     """
     Computes correlation matrices across selected or all numeric channels
     pooled across one or multiple test runs. Also returns feature rankings
-    sorted by coupling strength under each algorithm.
+    sorted by coupling strength under each algorithm (optionally relative to a target sensor).
     """
     from main import uploaded_files_cache
 
@@ -100,11 +101,20 @@ async def calculate_correlations_endpoint(
     if pooled_df.empty or len(common_cols) < 2:
         raise HTTPException(status_code=400, detail="At least 2 common numeric sensor columns are required across selected runs.")
 
-    cols = common_cols[:15] # default cap for matrix rendering performance
+    target_clean = target_col.strip() if target_col and str(target_col).strip() else None
+
+    if target_clean and target_clean in common_cols:
+        remaining = [c for c in common_cols if c != target_clean]
+        cols = [target_clean] + remaining[:14]
+    else:
+        cols = common_cols[:15] # default cap for matrix rendering performance
     df_active = pooled_df[cols]
+
+    active_target = target_clean if (target_clean and target_clean in cols) else None
 
     results = {
         "columns": cols,
+        "target_col": active_target,
         "available_algorithms": ["pearson", "spearman", "kendall", "fastdtw", "mutual_info"],
         "matrices": {},
         "feature_rankings": {},
@@ -116,23 +126,23 @@ async def calculate_correlations_endpoint(
 
     if req_algo in ("all", "pearson"):
         results["matrices"]["pearson"] = calculate_pearson_matrix(df_active, cols)["matrix"]
-        results["feature_rankings"]["pearson"] = rank_features_from_matrix(cols, results["matrices"]["pearson"])
+        results["feature_rankings"]["pearson"] = rank_features_from_matrix(cols, results["matrices"]["pearson"], target_col=active_target)
 
     if req_algo in ("all", "spearman"):
         results["matrices"]["spearman"] = calculate_spearman_matrix(df_active, cols)["matrix"]
-        results["feature_rankings"]["spearman"] = rank_features_from_matrix(cols, results["matrices"]["spearman"])
+        results["feature_rankings"]["spearman"] = rank_features_from_matrix(cols, results["matrices"]["spearman"], target_col=active_target)
 
     if req_algo in ("all", "kendall"):
         results["matrices"]["kendall"] = calculate_kendall_matrix(df_active, cols)["matrix"]
-        results["feature_rankings"]["kendall"] = rank_features_from_matrix(cols, results["matrices"]["kendall"])
+        results["feature_rankings"]["kendall"] = rank_features_from_matrix(cols, results["matrices"]["kendall"], target_col=active_target)
 
     if req_algo in ("all", "fastdtw"):
         results["matrices"]["fastdtw"] = calculate_dtw_matrix(df_active, cols)["matrix"]
-        results["feature_rankings"]["fastdtw"] = rank_features_from_matrix(cols, results["matrices"]["fastdtw"])
+        results["feature_rankings"]["fastdtw"] = rank_features_from_matrix(cols, results["matrices"]["fastdtw"], target_col=active_target)
 
     if req_algo in ("all", "mutual_info"):
         results["matrices"]["mutual_info"] = calculate_mutual_info_matrix(df_active, cols)["matrix"]
-        results["feature_rankings"]["mutual_info"] = rank_features_from_matrix(cols, results["matrices"]["mutual_info"])
+        results["feature_rankings"]["mutual_info"] = rank_features_from_matrix(cols, results["matrices"]["mutual_info"], target_col=active_target)
 
     return results
 

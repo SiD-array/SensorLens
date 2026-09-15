@@ -293,7 +293,7 @@ def test_feature_ranking_and_composite_sensor(sample_sensor_df):
     assert comp_api_data["new_sensor_name"] == "PCA_Merged_Sensors"
     assert comp_api_data["variance_explained_pct"] > 90.0
 
-    # 5. Verify feature_rankings in GET /api/analytics/correlations
+    # 5. Verify feature_rankings in POST /api/analytics/correlations
     corr_res = client.post(
         "/api/analytics/correlations",
         data={
@@ -307,5 +307,24 @@ def test_feature_ranking_and_composite_sensor(sample_sensor_df):
     assert "feature_rankings" in corr_json
     assert "pearson" in corr_json["feature_rankings"]
     assert len(corr_json["feature_rankings"]["pearson"]) == 3
+
+    # 6. Verify feature_rankings with target_col specified
+    corr_target_res = client.post(
+        "/api/analytics/correlations",
+        data={
+            "file_id": file_id,
+            "algorithm": "pearson",
+            "columns_json": json.dumps(["sensor_1", "sensor_2", "PCA_Merged_Sensors"]),
+            "target_col": "sensor_1"
+        }
+    )
+    assert corr_target_res.status_code == 200
+    corr_target_json = corr_target_res.json()
+    assert corr_target_json["target_col"] == "sensor_1"
+    rankings_target = corr_target_json["feature_rankings"]["pearson"]
+    # Should exclude target itself and rank other features
+    assert len(rankings_target) == 2
+    assert all(r["column"] != "sensor_1" for r in rankings_target)
+    assert rankings_target[0]["score"] > 0.8
 
 

@@ -1,70 +1,63 @@
-# Walkthrough: Analytics UI Alignment & Global Font Size Scaling
+# Walkthrough: Senior UI/UX Upgrade & Predictive Target Correlation Studio
 
-We have resolved the UI layout issues in the **Analytics & ML Studio** tab and globally scaled the typography across every element in the frontend.
-
----
-
-## 1. Analytics & ML Studio UI Layout Alignment
-The class names in [`AnalyticsView.tsx`](file:///c:/Users/sidb9/Desktop/Projects/SensorLens/frontend/src/components/Analytics/AnalyticsView.tsx) now have complete, dedicated, dark-themed styling in [`index.css`](file:///c:/Users/sidb9/Desktop/Projects/SensorLens/frontend/src/index.css):
-
-- **Header Bar**:
-  - Full-width dark glass header with title, descriptive subtitle, active dataset selector, and styled navigation tab buttons (`Correlation Explorer` vs. `ML Model Studio`) with cyan glow active indicators.
-- **Correlation Explorer Layout**:
-  - **Left Sidebar (330px)**:
-    - Algorithm Selector cards (`.algo-pill-btn`) for **Pearson**, **Spearman**, **Kendall Tau**, **FastDTW**, and **Mutual Information** with active dot indicators and description subtitles.
-    - Sensor multi-select checklist (`.corr-channels-scroll`) with **Top 15** and **Clear** quick buttons.
-    - Prominent **Compute Correlation Matrix** action button (`.btn-run-benchmark`) with gradient styling.
-  - **Right Main Stage Grid**:
-    - Split into a 2-column layout (`1.5fr : 1fr`):
-      - **Left Column**: Responsive ECharts correlation heatmap with toolbar title and hover hints.
-      - **Right Column**: Pairwise Diagnostic & Recommendation card with:
-        - `col_a ↔ col_b` badge.
-        - Emerald green recommendation banner explaining why a specific algorithm is recommended.
-        - 5-score comparison grid (Pearson, Spearman, Kendall, FastDTW, Mutual Info).
-        - Embedded scatter plot preview.
-- **ML Model Studio Layout**:
-  - **Left Sidebar**:
-    - Target Variable dropdown selector.
-    - Input Feature Sensors checklist with **All Features** and **Clear** quick buttons.
-    - Train/Test Split slider with dynamic percentage indicator.
-    - **Train & Compare Models** action button.
-  - **Right Main Stage**:
-    - **Model Leaderboard Grid**: 3 responsive cards for **Random Forest**, **XGBoost**, and **LightGBM** with **BEST MODEL** champion badges, R² scores, RMSE, MAE, and training time.
-    - **Actual vs Predicted Trajectory**: Full-width ECharts curve with dual X+Y zoom, train/test split boundary, and residual analysis.
-    - **Feature Importance Rankings**: Horizontal bar chart ranking top predictive sensors.
+We have upgraded the **Analytics & ML Studio** into a cohesive 5-star experience, addressing the active runs popover stacking bug and introducing a **Target-Driven Predictive Workflow** that connects correlation discovery directly to ML training.
 
 ---
 
-## 2. Global Frontend Font Size Scaling
-To address the tiny text across the dashboard, cards, lists, and tables:
-1. **Base Root Font Scaling**:
-   - Added `html { font-size: 18px; }` to [`index.css`](file:///c:/Users/sidb9/Desktop/Projects/SensorLens/frontend/src/index.css) (up from default `16px`), which automatically scales **all `rem`-based font sizes by +12.5%** across every screen in the app.
-2. **Body Base Typography**:
-   - Set `body { font-size: 0.95rem; line-height: 1.5; }`.
-3. **Component-Specific Font Elevating**:
-   - **Navigation & Brand**:
-     - Brand title: `1.5rem` (up from 1.35rem).
-     - Brand subtitle: `0.85rem` (up from 0.75rem).
-     - Navigation toggle buttons: `0.95rem` (up from 0.85rem).
-   - **Cards & Sensor Telemetry**:
-     - Sensor titles: `1.0rem` (up from 0.88rem).
-     - Sensor stats: `0.88rem` (up from 0.78rem).
-     - File titles: `0.98rem` (up from 0.85rem).
-     - Badges and status tags: `0.78rem` - `0.84rem` (up from 0.62rem - 0.70rem).
-   - **Baseline & Scorecard**:
-     - Channel names & headers: `1.1rem` (up from 0.95rem).
-     - Diagnostic scorecard table cells: `0.85rem` (up from 0.72rem).
-     - Diagnostic scorecard table headers: `0.76rem` (up from 0.62rem).
-     - Verdict strip title: `1.05rem` (up from 0.84rem).
-     - Verdict summary: `0.88rem` (up from 0.72rem).
-   - **Form Controls**:
-     - Inputs, selects, and textareas: `0.90rem` - `0.92rem` (up from 0.76rem - 0.80rem).
+## 1. Stacking Context & Z-Index Bug Resolution
+### Root Cause:
+In [`frontend/src/index.css`](file:///c:/Users/sidb9/Desktop/Projects/SensorLens/frontend/src/index.css), `.analytics-header` lacked an explicit stacking context (`position: relative; z-index: ...`). Because `.analytics-body-grid` was a subsequent sibling in DOM order, its child containers (specifically HTML5 Canvas elements initialized by ECharts) created an isolated GPU composite layer that painted in front of the floating multi-run selector popover.
+
+### Fix Implemented:
+1. **Header Stacking Context**:
+   Added `position: relative; z-index: 100;` to `.analytics-header`.
+2. **Container Elevation**:
+   Added `position: relative; z-index: 110;` to `.multi-run-selector-container`.
+3. **Dropdown Popover Elevation**:
+   Elevated `.multi-run-popover` to `z-index: 9999;`, guaranteeing the active runs popover floats crisply above all heatmaps, charts, and canvases.
 
 ---
 
-## 3. Verification & Live Servers
-- **Automated Tests**: Ran `pytest backend/tests/ -v` &mdash; **18/18 tests passed (100%)**.
-- **Frontend Production Build**: Ran `npm run build` &mdash; **compiled cleanly in 1.02s with zero errors**.
-- **Live Servers Active**:
-  - **Backend API**: `http://127.0.0.1:8000` (FastAPI + Uvicorn)
-  - **Frontend UI**: `http://localhost:5173/` (Vite + React)
+## 2. Target Variable Integration into Correlation Explorer
+Rather than examining correlations in a vacuum, industrial telemetry engineers can now define the **Target Metric / Sensor Objective** directly in the Correlation Explorer:
+
+1. **Sidebar Target Variable Selector**:
+   - Section 1 in the Correlation sidebar now features a dedicated **Target Variable Objective Card** (`.target-objective-card`) with an "Objective" badge and dropdown.
+   - Allows choosing any sensor column or selecting `"-- No Target (General Discovery) --"`.
+2. **Algorithm-Aware Driver Ranking**:
+   - When a Target Variable is active, the backend (`/api/analytics/correlations`) ranks all other channels by their direct coupling score $|M[\text{target}, \text{feature}]|$ under the active algorithm.
+   - The quick action button dynamically updates to **"Top 15 Drivers ★"**, automatically selecting the target and its 14 strongest predictive channels.
+
+---
+
+## 3. Dual-View Stage: Predictive Drivers Impact (Tornado Chart) vs. Heatmap Matrix
+On the main stage, users can now toggle between two visualization modes:
+
+1. **Predictive Drivers Impact (Tornado Chart)**:
+   - Horizontal diverging bar chart ($r \in [-1, 1]$) with rounded bars.
+   - **Emerald / Green (`#10b981`)**: Positive coupling (sensor increases with target).
+   - **Rose / Red (`#f43f5e`)**: Inverse coupling (sensor decreases as target rises).
+   - **Interactive Deep-Dive**: Clicking any bar immediately loads the **Pairwise Diagnostic & Recommendation** in the right panel (`Target ↔ Selected Driver`) with scatter plot, non-linearity detection, and phase-lag analysis.
+2. **1-Click Bridge to ML Model Studio**:
+   - A glowing **"Train ML Models with Drivers 🚀"** button right on the Tornado chart header transfers the target variable and top 8 predictive drivers directly into the ML Model Studio and switches tabs seamlessly.
+3. **Full Correlation Matrix**:
+   - The $N \times N$ interactive heatmap remains available via the stage toggle (`Matrix`) for holistic pairwise pattern discovery.
+
+---
+
+## 4. Manual PCA / Composite Sensor Builder
+- Accessible via the **"Combine / PCA"** button in the sidebar.
+- Allows combining collinear or redundant channels using **PCA (1st Principal Component)** or **Z-Score Normalized Averaging**.
+- Injected in-place into all selected test runs, with variance explained percentage and instant re-analysis.
+
+---
+
+## 5. Automated Verification Results
+- **Backend Test Suite**:
+  - Ran `pytest backend/tests/ -v` &mdash; **20/20 tests passed (100%)**.
+  - Verified tests for Pearson, Spearman, Kendall, FastDTW, Mutual Information, Pair Diagnosis, ML Model Training, Multi-Run Pooling, Target-Specific Feature Ranking, and PCA/Average Composite Sensor generation.
+- **Frontend Production Build**:
+  - Ran `npm run build` &mdash; **compiled cleanly in 1.39s with zero errors**.
+- **Live Background Servers**:
+  - **Backend API**: `http://127.0.0.1:8000` (FastAPI + Uvicorn with auto-reload).
+  - **Frontend UI**: `http://localhost:5173/` (Vite + React dev server).

@@ -4,7 +4,8 @@ import {
   Network, Cpu, Play, AlertTriangle, 
   HelpCircle, RefreshCw, Award, Sparkles,
   ChevronDown, Filter, X, Star, Layers,
-  Combine, ArrowUpDown, Check
+  Combine, ArrowUpDown, Check, Target,
+  BarChart3, Grid3X3
 } from 'lucide-react';
 import type { TestFile } from '../../types/baseline';
 
@@ -18,11 +19,14 @@ interface AnalyticsViewProps {
 export interface FeatureRanking {
   column: string;
   score: number;
+  signed_score?: number;
+  direction?: 'positive' | 'negative';
   rank: number;
 }
 
 interface CorrelationData {
   columns: string[];
+  target_col?: string | null;
   available_algorithms: string[];
   matrices: Record<string, number[][]>;
   feature_rankings?: Record<string, FeatureRanking[]>;
@@ -176,6 +180,8 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
   // -------------------------------------------------------------
   // 1. CORRELATION EXPLORER STATE
   // -------------------------------------------------------------
+  const [targetVariable, setTargetVariable] = useState<string>('');
+  const [stageViewMode, setStageViewMode] = useState<'tornado' | 'heatmap'>('tornado');
   const [selectedCorrAlgo, setSelectedCorrAlgo] = useState<'pearson' | 'spearman' | 'kendall' | 'fastdtw' | 'mutual_info'>('pearson');
   const [selectedCorrChannels, setSelectedCorrChannels] = useState<string[]>([]);
   const [corrData, setCorrData] = useState<CorrelationData | null>(null);
@@ -192,6 +198,17 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
 
   const numColsKey = useMemo(() => numericColumns.join(','), [numericColumns]);
   const fileIdsKey = useMemo(() => selectedFileIds.join(','), [selectedFileIds]);
+
+  // Initialize target variable when numeric columns load
+  useEffect(() => {
+    if (numericColumns.length >= 1) {
+      if (!targetVariable || !numericColumns.includes(targetVariable)) {
+        setTargetVariable(numericColumns[0]);
+      }
+    } else {
+      setTargetVariable('');
+    }
+  }, [numColsKey]);
 
   // Active rankings for the selected correlation algorithm
   const activeRankings = useMemo(() => {
@@ -225,9 +242,19 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
         const rB = activeRankings[b]?.rank ?? 9999;
         return rA - rB;
       });
-      setSelectedCorrChannels(ranked.slice(0, 15));
+      if (targetVariable && numericColumns.includes(targetVariable)) {
+        const others = ranked.filter(c => c !== targetVariable);
+        setSelectedCorrChannels([targetVariable, ...others.slice(0, 14)]);
+      } else {
+        setSelectedCorrChannels(ranked.slice(0, 15));
+      }
     } else {
-      setSelectedCorrChannels(numericColumns.slice(0, 15));
+      if (targetVariable && numericColumns.includes(targetVariable)) {
+        const others = numericColumns.filter(c => c !== targetVariable);
+        setSelectedCorrChannels([targetVariable, ...others.slice(0, 14)]);
+      } else {
+        setSelectedCorrChannels(numericColumns.slice(0, 15));
+      }
     }
   };
 
@@ -346,7 +373,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
   }, [selectedFileIds, numericColumns]);
 
 
-  const handleFetchCorrelations = async (channelsOverride?: string[]) => {
+  const handleFetchCorrelations = async (channelsOverride?: string[], targetOverride?: string) => {
     const channelsToUse = channelsOverride || selectedCorrChannels;
     if (selectedFileIds.length === 0 || channelsToUse.length < 2) return;
     setIsLoadingCorr(true);
@@ -361,6 +388,11 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
       formData.append('columns_json', JSON.stringify(channelsToUse));
       formData.append('algorithm', 'all');
 
+      const effectiveTarget = targetOverride !== undefined ? targetOverride : targetVariable;
+      if (effectiveTarget && effectiveTarget.trim()) {
+        formData.append('target_col', effectiveTarget.trim());
+      }
+
       const res = await fetch('http://localhost:8000/api/analytics/correlations', {
         method: 'POST',
         body: formData
@@ -374,9 +406,21 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
       const data: CorrelationData = await res.json();
       setCorrData(data);
 
-      // Auto-select first pair if none selected
-      if (data.columns.length >= 2) {
-        handleInspectPair(data.columns[0], data.columns[1]);
+      // Auto-select stage view and inspect pair
+      if (data.target_col) {
+        setStageViewMode('tornado');
+        // Find top driver of this target
+        const rankings = data.feature_rankings?.[selectedCorrAlgo] || [];
+        const topDriver = rankings.find(r => r.column !== data.target_col)?.column;
+        if (topDriver) {
+          handleInspectPair(data.target_col, topDriver);
+        } else if (data.columns.length >= 2) {
+          handleInspectPair(data.columns[0], data.columns[1]);
+        }
+      } else {
+        if (data.columns.length >= 2) {
+          handleInspectPair(data.columns[0], data.columns[1]);
+        }
       }
     } catch (e: any) {
       console.error(e);
@@ -414,29 +458,39 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
     }
   };
 
+  // Bridge from Correlation Explorer to ML Model Studio
+  const handleExportToML = () => {
+    if (!corrData?.target_col) return;
+    setTargetVariable(corrData.target_col);
+    const rankings = corrData.feature_rankings?.[selectedCorrAlgo] || [];
+    const topDrivers = rankings
+      .filter(r => r.column !== corrData.target_col)
+      .slice(0, 8)
+      .map(r => r.column);
+    if (topDrivers.length > 0) {
+      setFeatureSensors(topDrivers);
+    }
+    setActiveTab('ml');
+  };
+
   // -------------------------------------------------------------
   // 2. ML PREDICTION STUDIO STATE
   // -------------------------------------------------------------
-  const [targetVariable, setTargetVariable] = useState<string>('');
   const [featureSensors, setFeatureSensors] = useState<string[]>([]);
   const [splitRatio, setSplitRatio] = useState<number>(0.2); // 80% train / 20% test
   const [isTrainingML, setIsTrainingML] = useState(false);
   const [mlResult, setMlResult] = useState<MLTrainingResult | null>(null);
   const [mlError, setMlError] = useState<string | null>(null);
 
-  // Initialize target and features
+  // Initialize features when target or columns change
   useEffect(() => {
     if (numericColumns.length >= 2) {
-      if (!numericColumns.includes(targetVariable)) {
-        setTargetVariable(numericColumns[0]);
-      }
       setFeatureSensors(prev => {
         const valid = prev.filter(c => numericColumns.includes(c) && c !== targetVariable);
         if (valid.length > 0) return valid;
-        return numericColumns.slice(1, Math.min(numericColumns.length, 8));
+        return numericColumns.filter(c => c !== targetVariable).slice(0, Math.min(numericColumns.length - 1, 8));
       });
     } else {
-      setTargetVariable('');
       setFeatureSensors([]);
     }
   }, [numColsKey, targetVariable]);
@@ -479,6 +533,91 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
   // -------------------------------------------------------------
   // CHART BUILDERS
   // -------------------------------------------------------------
+  const getTargetTornadoOption = () => {
+    if (!corrData?.feature_rankings || !corrData.target_col) return {};
+    const rankings = corrData.feature_rankings[selectedCorrAlgo] || [];
+    if (rankings.length === 0) return {};
+
+    // Drivers excluding target itself, cap at top 15
+    const drivers = rankings.filter(r => r.column !== corrData.target_col).slice(0, 15);
+    const reversed = [...drivers].reverse();
+    const categories = reversed.map(d => d.column);
+    const values = reversed.map(d => d.signed_score !== undefined ? d.signed_score : d.score);
+
+    const minX = selectedCorrAlgo === 'mutual_info' || selectedCorrAlgo === 'fastdtw' ? 0 : -1;
+
+    return {
+      backgroundColor: 'transparent',
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        formatter: (params: any) => {
+          const d = reversed[params[0].dataIndex];
+          const val = params[0].value;
+          const sign = val > 0 ? '+' : '';
+          return `<b>${d.column}</b> ↔ <b>${corrData.target_col}</b><br/>` +
+                 `Coupling (${selectedCorrAlgo.toUpperCase()}): <b>${sign}${typeof val === 'number' ? val.toFixed(4) : val}</b><br/>` +
+                 `Direction: <b style="color:${val >= 0 ? '#34d399' : '#f43f5e'}">${val >= 0 ? 'Positive Coupling' : 'Inverse / Negative Coupling'}</b><br/>` +
+                 `<span style="font-size:0.72rem;color:#94a3b8">Click bar to view full non-linear & lag diagnostic</span>`;
+        }
+      },
+      grid: { left: '22%', right: '12%', bottom: '10%', top: '6%', containLabel: true },
+      xAxis: {
+        type: 'value',
+        name: `${selectedCorrAlgo.toUpperCase()} Impact Score`,
+        nameLocation: 'middle',
+        nameGap: 24,
+        min: minX,
+        max: 1,
+        axisLabel: { color: '#aaa', fontSize: 11 },
+        splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.08)' } }
+      },
+      yAxis: {
+        type: 'category',
+        data: categories,
+        axisLabel: { color: '#e2e8f0', fontSize: 11, fontWeight: 500 }
+      },
+      series: [{
+        name: 'Target Coupling',
+        type: 'bar',
+        data: values.map(val => ({
+          value: val,
+          itemStyle: {
+            color: val >= 0
+              ? {
+                  type: 'linear',
+                  x: 0, y: 0, x2: 1, y2: 0,
+                  colorStops: [
+                    { offset: 0, color: '#059669' },
+                    { offset: 1, color: '#10b981' }
+                  ]
+                }
+              : {
+                  type: 'linear',
+                  x: 0, y: 0, x2: 1, y2: 0,
+                  colorStops: [
+                    { offset: 0, color: '#e11d48' },
+                    { offset: 1, color: '#f43f5e' }
+                  ]
+                },
+            borderRadius: val >= 0 ? [0, 4, 4, 0] : [4, 0, 0, 4]
+          }
+        })),
+        label: {
+          show: true,
+          position: 'right',
+          formatter: (params: any) => {
+            const v = params.value;
+            return (v > 0 ? '+' : '') + Number(v).toFixed(3);
+          },
+          color: '#e2e8f0',
+          fontSize: 10,
+          fontWeight: 600
+        }
+      }]
+    };
+  };
+
   const getCorrelationHeatmapOption = () => {
     if (!corrData || !corrData.matrices[selectedCorrAlgo]) return {};
     const cols = corrData.columns;
@@ -907,8 +1046,49 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
         <div className="analytics-body-grid">
           {/* Left Controls & Channel Selector */}
           <aside className="analytics-sidebar">
+            {/* 1. Target Objective Card */}
+            <div className="target-objective-card">
+              <div className="target-header-row">
+                <div className="target-label-group">
+                  <Target size={15} className="text-accent-cyan" />
+                  <span className="target-label-text">1. Target Variable</span>
+                </div>
+                {targetVariable && (
+                  <span className="target-badge-pill">Objective</span>
+                )}
+              </div>
+              <div className="target-select-wrapper">
+                <select
+                  value={targetVariable}
+                  onChange={(e) => {
+                    const newTarget = e.target.value;
+                    setTargetVariable(newTarget);
+                    if (corrData && newTarget) {
+                      handleFetchCorrelations(undefined, newTarget);
+                    }
+                  }}
+                  className="target-channel-select"
+                >
+                  <option value="">-- No Target (General Discovery) --</option>
+                  {numericColumns.map(col => (
+                    <option key={col} value={col}>🎯 {col}</option>
+                  ))}
+                </select>
+                <ChevronDown size={14} className="target-select-chevron" />
+              </div>
+              <p className="target-card-caption">
+                {targetVariable ? (
+                  <>Ranks which sensors are the strongest predictive drivers of <b>{targetVariable}</b>.</>
+                ) : (
+                  'Select a target metric/sensor to evaluate driver impacts and bridge to ML Studio.'
+                )}
+              </p>
+            </div>
+
+            <div className="sidebar-divider" />
+
             <div className="sidebar-section-header">
-              <span className="section-title">1. Algorithm Selector</span>
+              <span className="section-title">2. Algorithm Selector</span>
               <span className="section-hint">Compare mathematical behaviors</span>
             </div>
 
@@ -937,15 +1117,15 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
             <div className="sidebar-divider" />
 
             <div className="sidebar-section-header">
-              <span className="section-title">2. Select Sensors ({selectedCorrChannels.length}/{numericColumns.length} common)</span>
+              <span className="section-title">3. Select Sensors ({selectedCorrChannels.length}/{numericColumns.length} common)</span>
               <div className="sidebar-quick-btns">
                 <button 
                   onClick={handleSelectTop15}
                   className="btn-tiny"
                   disabled={numericColumns.length === 0}
-                  title="Select Top 15 sensors with highest correlation coupling under active algorithm"
+                  title={targetVariable ? `Select target and Top 14 drivers of ${targetVariable}` : "Select Top 15 sensors with highest correlation coupling"}
                 >
-                  Top 15 {corrData?.feature_rankings?.[selectedCorrAlgo] ? '★' : ''}
+                  Top 15 {targetVariable ? 'Drivers ★' : (corrData?.feature_rankings?.[selectedCorrAlgo] ? '★' : '')}
                 </button>
                 <button 
                   onClick={() => setSelectedCorrChannels([])}
@@ -1057,41 +1237,145 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
           <main className="analytics-main-stage">
             {corrData ? (
               <div className="corr-stage-container">
-                {/* Heatmap Section */}
-                <div className="corr-heatmap-wrapper">
-                  <div className="corr-stage-toolbar">
-                    <div className="corr-toolbar-title-group">
-                      <span className="corr-toolbar-title">
-                        {selectedCorrAlgo.toUpperCase()} Matrix Benchmark ({corrData.columns.length} × {corrData.columns.length})
-                      </span>
-                      {corrData.total_runs && corrData.total_runs > 1 && (
-                        <span className="pooled-runs-badge" title={`Cross-run correlation pooled from ${corrData.total_runs} test files`}>
-                          <Layers size={11} />
-                          <span>{corrData.total_runs} Runs Pooled ({corrData.total_samples?.toLocaleString()} samples)</span>
+                {stageViewMode === 'tornado' && corrData.target_col ? (
+                  /* Target Drivers Tornado Impact Section */
+                  <div className="tornado-chart-wrapper">
+                    <div className="tornado-toolbar">
+                      <div className="tornado-title-group">
+                        <div className="tornado-title-row">
+                          <Target size={18} className="text-accent-cyan" />
+                          <span className="tornado-title">Predictive Drivers Impact</span>
+                          <span className="tornado-target-chip">
+                            <Target size={11} /> {corrData.target_col}
+                          </span>
+                        </div>
+                        <span className="tornado-subtitle">
+                          Features ranked by coupling magnitude under {selectedCorrAlgo.toUpperCase()}. Click any bar to diagnose pair.
                         </span>
-                      )}
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <div className="stage-view-toggles">
+                          <button
+                            type="button"
+                            className="stage-view-btn active"
+                            onClick={() => setStageViewMode('tornado')}
+                            title="View horizontal tornado impact chart of drivers"
+                          >
+                            <BarChart3 size={12} />
+                            <span>Target Drivers</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="stage-view-btn"
+                            onClick={() => setStageViewMode('heatmap')}
+                            title="View full NxN correlation heatmap"
+                          >
+                            <Grid3X3 size={12} />
+                            <span>Matrix</span>
+                          </button>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={handleExportToML}
+                          className="btn-send-to-ml"
+                          title="Transfer target variable and top predictive drivers directly to ML Model Studio"
+                        >
+                          <Sparkles size={13} />
+                          <span>Train ML Models 🚀</span>
+                        </button>
+                      </div>
                     </div>
-                    <span className="corr-toolbar-hint">
-                      Click any cell to compare all 5 algorithms for that pair
-                    </span>
-                  </div>
-                  <div className="corr-heatmap-chart">
-                    <ReactECharts
-                      option={getCorrelationHeatmapOption()}
-                      onEvents={{
-                        click: (params: any) => {
-                          if (params.data && params.data.length >= 2) {
-                            const cA = corrData.columns[params.data[0]];
-                            const cB = corrData.columns[params.data[1]];
-                            handleInspectPair(cA, cB);
+
+                    <div className="tornado-canvas-container">
+                      <ReactECharts
+                        option={getTargetTornadoOption()}
+                        onEvents={{
+                          click: (params: any) => {
+                            if (params.name && corrData.target_col) {
+                              handleInspectPair(params.name, corrData.target_col);
+                            }
                           }
-                        }
-                      }}
-                      style={{ height: '100%', width: '100%' }}
-                      theme="dark"
-                    />
+                        }}
+                        style={{ height: '100%', width: '100%' }}
+                        theme="dark"
+                      />
+                    </div>
+
+                    <div className="tornado-legend-bar">
+                      <div className="legend-item">
+                        <span className="legend-dot-pos" />
+                        <span>Positive Coupling (Feature increases as Target increases)</span>
+                      </div>
+                      <div className="legend-item">
+                        <span className="legend-dot-neg" />
+                        <span>Inverse Coupling (Feature decreases as Target increases)</span>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  /* Full Heatmap Section */
+                  <div className="corr-heatmap-wrapper">
+                    <div className="corr-stage-toolbar">
+                      <div className="corr-toolbar-title-group">
+                        <span className="corr-toolbar-title">
+                          {selectedCorrAlgo.toUpperCase()} Matrix Benchmark ({corrData.columns.length} × {corrData.columns.length})
+                        </span>
+                        {corrData.total_runs && corrData.total_runs > 1 && (
+                          <span className="pooled-runs-badge" title={`Cross-run correlation pooled from ${corrData.total_runs} test files`}>
+                            <Layers size={11} />
+                            <span>{corrData.total_runs} Runs Pooled ({corrData.total_samples?.toLocaleString()} samples)</span>
+                          </span>
+                        )}
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        {corrData.target_col && (
+                          <div className="stage-view-toggles">
+                            <button
+                              type="button"
+                              className="stage-view-btn"
+                              onClick={() => setStageViewMode('tornado')}
+                              title="View horizontal tornado impact chart of drivers"
+                            >
+                              <BarChart3 size={12} />
+                              <span>Target Drivers</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="stage-view-btn active"
+                              onClick={() => setStageViewMode('heatmap')}
+                              title="View full NxN correlation heatmap"
+                            >
+                              <Grid3X3 size={12} />
+                              <span>Matrix</span>
+                            </button>
+                          </div>
+                        )}
+                        <span className="corr-toolbar-hint">
+                          Click any cell for pair diagnostic
+                        </span>
+                      </div>
+                    </div>
+                    <div className="corr-heatmap-chart">
+                      <ReactECharts
+                        option={getCorrelationHeatmapOption()}
+                        onEvents={{
+                          click: (params: any) => {
+                            if (params.data && params.data.length >= 2) {
+                              const cA = corrData.columns[params.data[0]];
+                              const cB = corrData.columns[params.data[1]];
+                              handleInspectPair(cA, cB);
+                            }
+                          }
+                        }}
+                        style={{ height: '100%', width: '100%' }}
+                        theme="dark"
+                      />
+                    </div>
+                  </div>
+                )}
 
                 {/* Pairwise Deep-Dive & Recommender Sidebar */}
                 <div className="corr-pair-deepdive-card">

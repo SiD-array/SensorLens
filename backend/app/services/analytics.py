@@ -33,35 +33,64 @@ except ImportError:
 
 
 
-def rank_features_from_matrix(columns: List[str], matrix: List[List[float]]) -> List[Dict[str, Any]]:
+def rank_features_from_matrix(
+    columns: List[str], 
+    matrix: List[List[float]],
+    target_col: Optional[str] = None
+) -> List[Dict[str, Any]]:
     """
-    Ranks columns by their mean coupling strength score with all other columns
-    in the correlation/similarity matrix.
+    Ranks columns either by their direct correlation / coupling with a specified target_col,
+    or by their mean coupling strength score with all other columns.
     """
     if not columns or not matrix:
         return []
 
     n = len(columns)
     if n == 1:
-        return [{"column": columns[0], "score": 1.0, "rank": 1}]
+        return [{"column": columns[0], "score": 1.0, "signed_score": 1.0, "rank": 1, "direction": "positive"}]
 
     scored = []
-    for i, col in enumerate(columns):
-        other_scores = []
-        for j in range(n):
-            if i != j:
-                val = matrix[i][j]
-                if val is not None and not np.isnan(val):
-                    other_scores.append(abs(float(val)))
-        mean_score = float(np.mean(other_scores)) if other_scores else 0.0
-        scored.append({"column": col, "score": round(mean_score, 4)})
 
-    # Sort descending by score
+    if target_col and target_col in columns:
+        t_idx = columns.index(target_col)
+        for i, col in enumerate(columns):
+            if i == t_idx:
+                continue
+            val = matrix[t_idx][i]
+            if val is None or np.isnan(val):
+                val = 0.0
+            signed_val = round(float(val), 4)
+            abs_val = round(abs(signed_val), 4)
+            direction = "positive" if signed_val >= 0 else "negative"
+            scored.append({
+                "column": col,
+                "score": abs_val,
+                "signed_score": signed_val,
+                "direction": direction
+            })
+    else:
+        for i, col in enumerate(columns):
+            other_scores = []
+            for j in range(n):
+                if i != j:
+                    val = matrix[i][j]
+                    if val is not None and not np.isnan(val):
+                        other_scores.append(abs(float(val)))
+            mean_score = float(np.mean(other_scores)) if other_scores else 0.0
+            scored.append({
+                "column": col,
+                "score": round(mean_score, 4),
+                "signed_score": round(mean_score, 4),
+                "direction": "positive"
+            })
+
+    # Sort descending by score (magnitude)
     scored.sort(key=lambda x: x["score"], reverse=True)
     for idx, item in enumerate(scored):
         item["rank"] = idx + 1
 
     return scored
+
 
 
 def generate_composite_sensor(

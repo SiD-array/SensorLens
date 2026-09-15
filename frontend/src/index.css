@@ -4952,6 +4952,8 @@ h1, h2, h3, h4 {
 
 /* Header */
 .analytics-header {
+  position: relative;
+  z-index: 100;
   display: flex;
   flex-direction: row;
   justify-content: space-between;
@@ -5643,6 +5645,7 @@ h1, h2, h3, h4 {
    ========================================================================== */
 .multi-run-selector-container {
   position: relative;
+  z-index: 110;
   user-select: none;
 }
 
@@ -5726,7 +5729,7 @@ h1, h2, h3, h4 {
   border: 1px solid rgba(0, 242, 254, 0.35);
   border-radius: 10px;
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7), 0 0 24px rgba(0, 242, 254, 0.16);
-  z-index: 1000;
+  z-index: 9999;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -6254,6 +6257,266 @@ h1, h2, h3, h4 {
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(0, 0, 0, 0.25);
 }
+
+/* ==========================================================================
+   Correlation Explorer Target Selector & Stage View Toggles
+   ========================================================================== */
+
+/* Target Objective Card in Sidebar */
+.target-objective-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background: linear-gradient(145deg, rgba(99, 102, 241, 0.12) 0%, rgba(14, 165, 233, 0.08) 100%);
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  position: relative;
+  overflow: hidden;
+}
+
+.target-objective-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #6366f1, #00f2fe);
+}
+
+.target-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.target-label-group {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.target-label-text {
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.01em;
+}
+
+.target-badge-pill {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: rgba(99, 102, 241, 0.25);
+  color: #a5b4fc;
+  border: 1px solid rgba(99, 102, 241, 0.4);
+}
+
+.target-select-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.target-channel-select {
+  width: 100%;
+  background: rgba(10, 14, 26, 0.85);
+  border: 1px solid rgba(99, 102, 241, 0.4);
+  border-radius: 7px;
+  padding: 8px 30px 8px 10px;
+  color: #f1f5f9;
+  font-size: 0.86rem;
+  font-weight: 600;
+  outline: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  appearance: none;
+}
+
+.target-channel-select:hover,
+.target-channel-select:focus {
+  border-color: #00f2fe;
+  box-shadow: 0 0 12px rgba(0, 242, 254, 0.25);
+  background: rgba(15, 23, 42, 0.95);
+}
+
+.target-select-chevron {
+  position: absolute;
+  right: 10px;
+  pointer-events: none;
+  color: #94a3b8;
+}
+
+.target-card-caption {
+  font-size: 0.74rem;
+  color: #94a3b8;
+  line-height: 1.35;
+  margin-top: 1px;
+}
+
+/* Stage View Mode Toggle Buttons */
+.stage-view-toggles {
+  display: flex;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 3px;
+  border-radius: 8px;
+  gap: 3px;
+}
+
+.stage-view-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.stage-view-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.stage-view-btn.active {
+  background: rgba(0, 242, 254, 0.15);
+  color: #00f2fe;
+  border: 1px solid rgba(0, 242, 254, 0.35);
+  box-shadow: 0 0 10px rgba(0, 242, 254, 0.18);
+}
+
+/* Target Drivers Tornado Stage */
+.tornado-chart-wrapper {
+  background: rgba(17, 24, 39, 0.75);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  min-height: 520px;
+}
+
+.tornado-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding-bottom: 10px;
+  gap: 12px;
+}
+
+.tornado-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.tornado-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tornado-title {
+  font-size: 0.96rem;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.01em;
+}
+
+.tornado-target-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(99, 102, 241, 0.2);
+  border: 1px solid rgba(99, 102, 241, 0.45);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #c7d2fe;
+}
+
+.tornado-subtitle {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+.btn-send-to-ml {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px;
+  border-radius: 7px;
+  background: linear-gradient(135deg, #6366f1 0%, #00f2fe 100%);
+  color: #031024;
+  font-size: 0.82rem;
+  font-weight: 700;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.3);
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.btn-send-to-ml:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0, 242, 254, 0.45);
+}
+
+.tornado-canvas-container {
+  flex: 1;
+  min-height: 440px;
+  width: 100%;
+  position: relative;
+}
+
+.tornado-legend-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 0.74rem;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #cbd5e1;
+}
+
+.legend-dot-pos {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: #10b981;
+}
+
+.legend-dot-neg {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: #f43f5e;
+}
+
 
 
 
