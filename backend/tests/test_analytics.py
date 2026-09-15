@@ -224,3 +224,88 @@ def test_multi_run_pooling_endpoints(sample_sensor_df):
     assert m_data["total_samples"] == 200
     assert len(m_data["leaderboard"]) == 3
 
+
+def test_feature_ranking_and_composite_sensor(sample_sensor_df):
+    from app.services.analytics import rank_features_from_matrix, generate_composite_sensor
+    from io import BytesIO
+
+    # 1. Test rank_features_from_matrix
+    cols = ["a", "b", "c"]
+    mat = [
+        [1.0, 0.9, 0.8],
+        [0.9, 1.0, 0.4],
+        [0.8, 0.4, 1.0]
+    ]
+    rankings = rank_features_from_matrix(cols, mat)
+    assert len(rankings) == 3
+    # "a" has (0.9 + 0.8)/2 = 0.85 -> highest coupling score
+    assert rankings[0]["column"] == "a"
+    assert rankings[0]["rank"] == 1
+    assert rankings[0]["score"] == 0.85
+
+    # 2. Test generate_composite_sensor (PCA)
+    df_copy = sample_sensor_df.copy()
+    pca_res = generate_composite_sensor(
+        dfs=[df_copy],
+        source_cols=["sensor_1", "sensor_2"],
+        method="pca",
+        new_sensor_name="PCA_s1_s2"
+    )
+    assert pca_res["success"] is True
+    assert "PCA_s1_s2" in df_copy.columns
+    # Highly collinear sensors should yield >90% variance explained
+    assert pca_res["variance_explained_pct"] > 90.0
+    assert pca_res["sensor_column"]["name"] == "PCA_s1_s2"
+    assert len(pca_res["sensor_column"]["sparkline"]) == 30
+
+    # 3. Test generate_composite_sensor (Average)
+    avg_res = generate_composite_sensor(
+        dfs=[df_copy],
+        source_cols=["sensor_1", "sensor_2"],
+        method="average",
+        new_sensor_name="Avg_s1_s2"
+    )
+    assert avg_res["success"] is True
+    assert "Avg_s1_s2" in df_copy.columns
+    assert avg_res["variance_explained_pct"] is None
+
+    # 4. Test API endpoint POST /api/analytics/composite-sensor
+    buf = BytesIO()
+    sample_sensor_df.to_excel(buf, index=False)
+    buf.seek(0)
+    upload_res = client.post(
+        "/api/upload",
+        files={"file": ("pca_test.xlsx", buf, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+    )
+    file_id = upload_res.json()["id"]
+
+    comp_api_res = client.post(
+        "/api/analytics/composite-sensor",
+        json={
+            "file_ids": [file_id],
+            "source_cols": ["sensor_1", "sensor_2"],
+            "method": "pca",
+            "new_sensor_name": "PCA_Merged_Sensors"
+        }
+    )
+    assert comp_api_res.status_code == 200
+    comp_api_data = comp_api_res.json()
+    assert comp_api_data["new_sensor_name"] == "PCA_Merged_Sensors"
+    assert comp_api_data["variance_explained_pct"] > 90.0
+
+    # 5. Verify feature_rankings in GET /api/analytics/correlations
+    corr_res = client.post(
+        "/api/analytics/correlations",
+        data={
+            "file_id": file_id,
+            "algorithm": "all",
+            "columns_json": json.dumps(["sensor_1", "sensor_2", "PCA_Merged_Sensors"])
+        }
+    )
+    assert corr_res.status_code == 200
+    corr_json = corr_res.json()
+    assert "feature_rankings" in corr_json
+    assert "pearson" in corr_json["feature_rankings"]
+    assert len(corr_json["feature_rankings"]["pearson"]) == 3
+
+

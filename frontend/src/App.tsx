@@ -1361,6 +1361,7 @@ export default function App() {
           <AnalyticsView
             files={files}
             isActive={activeView === 'analytics'}
+            onFilesUpdate={(updatedFiles) => setFiles(updatedFiles)}
           />
         </div>
 

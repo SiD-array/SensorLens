@@ -13,7 +13,9 @@ from app.services.analytics import (
     calculate_dtw_matrix,
     calculate_mutual_info_matrix,
     diagnose_sensor_pair,
-    train_and_compare_models
+    train_and_compare_models,
+    rank_features_from_matrix,
+    generate_composite_sensor
 )
 
 router = APIRouter()
@@ -24,6 +26,14 @@ class PairDiagnoseRequest(BaseModel):
     file_ids: Optional[List[str]] = None
     col_a: str
     col_b: str
+
+
+class CompositeSensorRequest(BaseModel):
+    file_ids: Optional[List[str]] = None
+    file_id: Optional[str] = None
+    source_cols: List[str]
+    method: Optional[str] = "pca"
+    new_sensor_name: Optional[str] = None
 
 
 def _resolve_dataframes(
@@ -70,7 +80,8 @@ async def calculate_correlations_endpoint(
 ):
     """
     Computes correlation matrices across selected or all numeric channels
-    pooled across one or multiple test runs.
+    pooled across one or multiple test runs. Also returns feature rankings
+    sorted by coupling strength under each algorithm.
     """
     from main import uploaded_files_cache
 
@@ -96,6 +107,7 @@ async def calculate_correlations_endpoint(
         "columns": cols,
         "available_algorithms": ["pearson", "spearman", "kendall", "fastdtw", "mutual_info"],
         "matrices": {},
+        "feature_rankings": {},
         "total_runs": len(dfs),
         "total_samples": len(df_active)
     }
@@ -104,16 +116,65 @@ async def calculate_correlations_endpoint(
 
     if req_algo in ("all", "pearson"):
         results["matrices"]["pearson"] = calculate_pearson_matrix(df_active, cols)["matrix"]
+        results["feature_rankings"]["pearson"] = rank_features_from_matrix(cols, results["matrices"]["pearson"])
+
     if req_algo in ("all", "spearman"):
         results["matrices"]["spearman"] = calculate_spearman_matrix(df_active, cols)["matrix"]
+        results["feature_rankings"]["spearman"] = rank_features_from_matrix(cols, results["matrices"]["spearman"])
+
     if req_algo in ("all", "kendall"):
         results["matrices"]["kendall"] = calculate_kendall_matrix(df_active, cols)["matrix"]
+        results["feature_rankings"]["kendall"] = rank_features_from_matrix(cols, results["matrices"]["kendall"])
+
     if req_algo in ("all", "fastdtw"):
         results["matrices"]["fastdtw"] = calculate_dtw_matrix(df_active, cols)["matrix"]
+        results["feature_rankings"]["fastdtw"] = rank_features_from_matrix(cols, results["matrices"]["fastdtw"])
+
     if req_algo in ("all", "mutual_info"):
         results["matrices"]["mutual_info"] = calculate_mutual_info_matrix(df_active, cols)["matrix"]
+        results["feature_rankings"]["mutual_info"] = rank_features_from_matrix(cols, results["matrices"]["mutual_info"])
 
     return results
+
+
+@router.post("/analytics/composite-sensor")
+async def create_composite_sensor_endpoint(req: CompositeSensorRequest):
+    """
+    Generates a synthetic composite sensor channel via PCA (1st Principal Component)
+    or Z-score Normalized Averaging and injects it in-place into the specified test run(s).
+    """
+    from main import uploaded_files_cache
+
+    fids: List[str] = []
+    if req.file_ids:
+        fids = [fid for fid in req.file_ids if fid in uploaded_files_cache]
+    elif req.file_id and req.file_id in uploaded_files_cache:
+        fids = [req.file_id]
+
+    if not fids:
+        raise HTTPException(status_code=404, detail="Selected run(s) not found in workspace cache.")
+
+    dfs = [uploaded_files_cache[fid]["df"] for fid in fids]
+
+    try:
+        result = generate_composite_sensor(
+            dfs=dfs,
+            source_cols=req.source_cols,
+            method=req.method or "pca",
+            new_sensor_name=req.new_sensor_name
+        )
+
+        # Update columns metadata in cache for all affected files
+        for fid in fids:
+            file_info = uploaded_files_cache[fid]
+            existing_cols = [c["name"] for c in file_info.get("columns", [])]
+            if result["new_sensor_name"] not in existing_cols:
+                file_info["columns"].append(result["sensor_column"])
+
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 
 
 @router.post("/analytics/diagnose-pair")

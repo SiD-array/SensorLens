@@ -10,8 +10,146 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.feature_selection import mutual_info_regression
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 import xgboost as xgb
 import lightgbm as lgb
+
+try:
+    from similarity import interpolate_series
+except ImportError:
+    try:
+        from backend.similarity import interpolate_series
+    except ImportError:
+        def interpolate_series(series: np.ndarray, target_length: int = 30) -> np.ndarray:
+            n = len(series)
+            if n == 0:
+                return np.zeros(target_length)
+            if n == target_length:
+                return series
+            x_old = np.linspace(0, 1, n)
+            x_new = np.linspace(0, 1, target_length)
+            return np.interp(x_new, x_old, series)
+
+
+
+def rank_features_from_matrix(columns: List[str], matrix: List[List[float]]) -> List[Dict[str, Any]]:
+    """
+    Ranks columns by their mean coupling strength score with all other columns
+    in the correlation/similarity matrix.
+    """
+    if not columns or not matrix:
+        return []
+
+    n = len(columns)
+    if n == 1:
+        return [{"column": columns[0], "score": 1.0, "rank": 1}]
+
+    scored = []
+    for i, col in enumerate(columns):
+        other_scores = []
+        for j in range(n):
+            if i != j:
+                val = matrix[i][j]
+                if val is not None and not np.isnan(val):
+                    other_scores.append(abs(float(val)))
+        mean_score = float(np.mean(other_scores)) if other_scores else 0.0
+        scored.append({"column": col, "score": round(mean_score, 4)})
+
+    # Sort descending by score
+    scored.sort(key=lambda x: x["score"], reverse=True)
+    for idx, item in enumerate(scored):
+        item["rank"] = idx + 1
+
+    return scored
+
+
+def generate_composite_sensor(
+    dfs: List[pd.DataFrame],
+    source_cols: List[str],
+    method: str = "pca",
+    new_sensor_name: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Combines multiple redundant sensor channels into a single synthetic sensor channel
+    using either PCA (1st Principal Component) or Z-score Normalized Averaging.
+    The new channel is injected in-place into all provided DataFrames.
+    """
+    if not dfs:
+        raise ValueError("At least one dataset DataFrame is required.")
+    if len(source_cols) < 2:
+        raise ValueError("At least 2 sensor channels are required to generate a composite sensor.")
+
+    method = (method or "pca").lower().strip()
+    clean_sources = [str(c).strip() for c in source_cols]
+
+    if not new_sensor_name or not str(new_sensor_name).strip():
+        prefix = "PCA" if method == "pca" else "Avg"
+        new_sensor_name = f"{prefix}_{'_'.join(clean_sources[:2])}"
+    else:
+        new_sensor_name = str(new_sensor_name).strip()
+
+    variance_explained = None
+    primary_series = None
+
+    for df in dfs:
+        # Check source cols exist
+        missing = [c for c in clean_sources if c not in df.columns]
+        if missing:
+            raise ValueError(f"Columns {missing} not present in dataset.")
+
+        # Clean numeric data
+        sub = df[clean_sources].copy()
+        for c in clean_sources:
+            sub[c] = pd.to_numeric(sub[c], errors="coerce")
+        sub = sub.ffill().bfill().fillna(0)
+
+        scaler = StandardScaler()
+        scaled = scaler.fit_transform(sub.values)
+
+        if method == "pca":
+            pca = PCA(n_components=1)
+            pc1 = pca.fit_transform(scaled).flatten()
+            variance_explained = round(float(pca.explained_variance_ratio_[0] * 100), 2)
+            df[new_sensor_name] = pc1
+        else:
+            # Z-score normalized average
+            avg_series = scaled.mean(axis=1)
+            df[new_sensor_name] = avg_series
+            variance_explained = None
+
+        if primary_series is None:
+            primary_series = df[new_sensor_name]
+
+    # Generate SensorColumn metadata using primary df
+    c_min = float(primary_series.min())
+    c_max = float(primary_series.max())
+    c_mean = float(primary_series.mean())
+    c_std = float(primary_series.std()) if len(primary_series) > 1 else 0.0
+
+    sparkline_pts = interpolate_series(primary_series.values, 30).tolist()
+
+    sensor_column_meta = {
+        "name": new_sensor_name,
+        "type": "numeric",
+        "total_rows": len(primary_series),
+        "missing_count": 0,
+        "min": c_min,
+        "max": c_max,
+        "mean": c_mean,
+        "std": c_std,
+        "sparkline": sparkline_pts
+    }
+
+    return {
+        "success": True,
+        "new_sensor_name": new_sensor_name,
+        "method": method,
+        "variance_explained_pct": variance_explained,
+        "sensor_column": sensor_column_meta,
+        "source_columns": clean_sources
+    }
+
 
 
 def pool_datasets(dfs: List[pd.DataFrame], columns: Optional[List[str]] = None) -> Tuple[pd.DataFrame, List[str]]:

@@ -3,7 +3,8 @@ import ReactECharts from 'echarts-for-react';
 import { 
   Network, Cpu, Play, AlertTriangle, 
   HelpCircle, RefreshCw, Award, Sparkles,
-  ChevronDown, Filter, X, Star, Layers
+  ChevronDown, Filter, X, Star, Layers,
+  Combine, ArrowUpDown, Check
 } from 'lucide-react';
 import type { TestFile } from '../../types/baseline';
 
@@ -11,12 +12,20 @@ interface AnalyticsViewProps {
   files: TestFile[];
   activeFileId?: string;
   isActive?: boolean;
+  onFilesUpdate?: (updatedFiles: TestFile[]) => void;
+}
+
+export interface FeatureRanking {
+  column: string;
+  score: number;
+  rank: number;
 }
 
 interface CorrelationData {
   columns: string[];
   available_algorithms: string[];
   matrices: Record<string, number[][]>;
+  feature_rankings?: Record<string, FeatureRanking[]>;
   total_runs?: number;
   total_samples?: number;
 }
@@ -85,7 +94,7 @@ interface MLTrainingResult {
   };
 }
 
-export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileId }) => {
+export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileId, onFilesUpdate }) => {
   const [activeTab, setActiveTab] = useState<'correlation' | 'ml'>('correlation');
 
   // Multi-run active dataset selection
@@ -173,6 +182,9 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
   const [isLoadingCorr, setIsLoadingCorr] = useState(false);
   const [corrError, setCorrError] = useState<string | null>(null);
 
+  // Sorting mode for channels
+  const [channelSortMode, setChannelSortMode] = useState<'rank' | 'alpha'>('rank');
+
   // Selected cell for pairwise deep-dive
   const [selectedPair, setSelectedPair] = useState<{ col_a: string; col_b: string } | null>(null);
   const [pairDiag, setPairDiag] = useState<PairDiagnostic | null>(null);
@@ -180,6 +192,130 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
 
   const numColsKey = useMemo(() => numericColumns.join(','), [numericColumns]);
   const fileIdsKey = useMemo(() => selectedFileIds.join(','), [selectedFileIds]);
+
+  // Active rankings for the selected correlation algorithm
+  const activeRankings = useMemo(() => {
+    if (!corrData?.feature_rankings) return {};
+    const list = corrData.feature_rankings[selectedCorrAlgo] || [];
+    const map: Record<string, FeatureRanking> = {};
+    list.forEach(item => { map[item.column] = item; });
+    return map;
+  }, [corrData, selectedCorrAlgo]);
+
+  // Displayed channels sorted by rank or alpha
+  const displayChannels = useMemo(() => {
+    const cols = [...numericColumns];
+    if (channelSortMode === 'rank' && Object.keys(activeRankings).length > 0) {
+      cols.sort((a, b) => {
+        const rankA = activeRankings[a]?.rank ?? 9999;
+        const rankB = activeRankings[b]?.rank ?? 9999;
+        return rankA - rankB;
+      });
+    } else {
+      cols.sort((a, b) => a.localeCompare(b));
+    }
+    return cols;
+  }, [numericColumns, channelSortMode, activeRankings]);
+
+  // Algorithm-aware Top 15 selection
+  const handleSelectTop15 = () => {
+    if (Object.keys(activeRankings).length > 0) {
+      const ranked = [...numericColumns].sort((a, b) => {
+        const rA = activeRankings[a]?.rank ?? 9999;
+        const rB = activeRankings[b]?.rank ?? 9999;
+        return rA - rB;
+      });
+      setSelectedCorrChannels(ranked.slice(0, 15));
+    } else {
+      setSelectedCorrChannels(numericColumns.slice(0, 15));
+    }
+  };
+
+  // -------------------------------------------------------------
+  // MANUAL PCA / COMPOSITE SENSOR BUILDER STATE
+  // -------------------------------------------------------------
+  const [isCombineModalOpen, setIsCombineModalOpen] = useState(false);
+  const [compositeSources, setCompositeSources] = useState<string[]>([]);
+  const [compositeMethod, setCompositeMethod] = useState<'pca' | 'average'>('pca');
+  const [compositeName, setCompositeName] = useState('');
+  const [isGeneratingComposite, setIsGeneratingComposite] = useState(false);
+  const [compositeError, setCompositeError] = useState<string | null>(null);
+  const [compositeSuccessMsg, setCompositeSuccessMsg] = useState<string | null>(null);
+
+  // Auto-suggest name
+  useEffect(() => {
+    if (compositeSources.length >= 2) {
+      const clean = compositeSources.slice(0, 2).map(s => s.replace(/[^a-zA-Z0-9]/g, '_'));
+      const prefix = compositeMethod === 'pca' ? 'PCA' : 'Avg';
+      setCompositeName(`${prefix}_${clean.join('_')}`);
+    }
+  }, [compositeSources, compositeMethod]);
+
+  const handleCreateComposite = async () => {
+    if (compositeSources.length < 2 || !compositeName.trim() || selectedFileIds.length === 0) return;
+    setIsGeneratingComposite(true);
+    setCompositeError(null);
+    setCompositeSuccessMsg(null);
+
+    try {
+      const res = await fetch('http://localhost:8000/api/analytics/composite-sensor', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          file_ids: selectedFileIds,
+          source_cols: compositeSources,
+          method: compositeMethod,
+          new_sensor_name: compositeName.trim()
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Failed to generate composite sensor');
+      }
+
+      const data = await res.json();
+      const newCol = data.sensor_column;
+      const newColName = data.new_sensor_name;
+
+      // Update frontend files state across all selected files
+      const updatedFiles = files.map(f => {
+        if (selectedFileIds.includes(f.id)) {
+          const existingCols = f.columns.map(c => c.name);
+          if (!existingCols.includes(newColName)) {
+            return {
+              ...f,
+              columns: [...f.columns, newCol]
+            };
+          }
+        }
+        return f;
+      });
+
+      if (onFilesUpdate) {
+        onFilesUpdate(updatedFiles);
+      }
+
+      // Automatically include the new composite sensor in the correlation channels
+      setSelectedCorrChannels(prev => Array.from(new Set([newColName, ...prev])));
+
+      const successNote = data.method === 'pca' && data.variance_explained_pct
+        ? `Generated ${newColName} via PCA (${data.variance_explained_pct}% variance explained)!`
+        : `Generated ${newColName} via Normalized Average!`;
+
+      setCompositeSuccessMsg(successNote);
+      setTimeout(() => {
+        setIsCombineModalOpen(false);
+        setCompositeSuccessMsg(null);
+        setCompositeSources([]);
+      }, 1600);
+    } catch (err: any) {
+      console.error(err);
+      setCompositeError(err.message || 'Error generating composite sensor');
+    } finally {
+      setIsGeneratingComposite(false);
+    }
+  };
 
   // Sync selected channels when common columns change
   useEffect(() => {
@@ -208,6 +344,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
       handleFetchCorrelations(initial);
     }
   }, [selectedFileIds, numericColumns]);
+
 
   const handleFetchCorrelations = async (channelsOverride?: string[]) => {
     const channelsToUse = channelsOverride || selectedCorrChannels;
@@ -803,11 +940,12 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
               <span className="section-title">2. Select Sensors ({selectedCorrChannels.length}/{numericColumns.length} common)</span>
               <div className="sidebar-quick-btns">
                 <button 
-                  onClick={() => setSelectedCorrChannels(numericColumns.slice(0, 15))}
+                  onClick={handleSelectTop15}
                   className="btn-tiny"
                   disabled={numericColumns.length === 0}
+                  title="Select Top 15 sensors with highest correlation coupling under active algorithm"
                 >
-                  Top 15
+                  Top 15 {corrData?.feature_rankings?.[selectedCorrAlgo] ? '★' : ''}
                 </button>
                 <button 
                   onClick={() => setSelectedCorrChannels([])}
@@ -816,6 +954,45 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
                   Clear
                 </button>
               </div>
+            </div>
+
+            {/* Sorting Toggles & Combine Sensors Action Bar */}
+            <div className="channel-filter-toolbar">
+              <div className="channel-sort-toggles">
+                <button 
+                  type="button"
+                  onClick={() => setChannelSortMode('rank')}
+                  className={`sort-pill-btn ${channelSortMode === 'rank' ? 'active' : ''}`}
+                  title="Sort channels by algorithm coupling strength rank"
+                >
+                  <ArrowUpDown size={11} />
+                  <span>By Rank</span>
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => setChannelSortMode('alpha')}
+                  className={`sort-pill-btn ${channelSortMode === 'alpha' ? 'active' : ''}`}
+                  title="Sort channels alphabetically"
+                >
+                  <span>A-Z</span>
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setCompositeSources([]);
+                  setCompositeError(null);
+                  setCompositeSuccessMsg(null);
+                  setIsCombineModalOpen(true);
+                }}
+                className="btn-combine-sensors"
+                title="Combine redundant sensors into a single synthetic channel via PCA or Normalized Average"
+                disabled={numericColumns.length < 2}
+              >
+                <Combine size={12} />
+                <span>Combine / PCA</span>
+              </button>
             </div>
 
             {selectedFileIds.length === 0 ? (
@@ -830,8 +1007,9 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
               </div>
             ) : (
               <div className="corr-channels-scroll">
-                {numericColumns.map(colName => {
+                {displayChannels.map(colName => {
                   const isChecked = selectedCorrChannels.includes(colName);
+                  const rankInfo = activeRankings[colName];
                   return (
                     <label key={colName} className="corr-channel-item">
                       <input
@@ -847,6 +1025,11 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
                         className="checkbox-custom"
                       />
                       <span className="channel-item-label" title={colName}>{colName}</span>
+                      {rankInfo && (
+                        <span className="sensor-rank-pill" title={`Coupling score: ${rankInfo.score} under ${selectedCorrAlgo.toUpperCase()}`}>
+                          #{rankInfo.rank}
+                        </span>
+                      )}
                     </label>
                   );
                 })}
@@ -1224,6 +1407,142 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
           </main>
         </div>
       )}
+
+      {/* MODAL: COMBINE SENSORS / MANUAL PCA */}
+      {isCombineModalOpen && (
+        <div className="composite-modal-backdrop" onClick={() => setIsCombineModalOpen(false)}>
+          <div className="composite-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="composite-modal-header">
+              <div className="modal-title-row">
+                <Combine size={18} className="text-accent-cyan" />
+                <h3>Combine Sensors (PCA & Averaging)</h3>
+              </div>
+              <button onClick={() => setIsCombineModalOpen(false)} className="btn-icon-ghost">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="composite-modal-body">
+              <p className="composite-hint-text">
+                Compress redundant sensors into a single synthetic channel to eliminate collinearity in correlation analysis and stabilize ML model training.
+              </p>
+
+              {/* 1. Method Selection */}
+              <div className="composite-field-group">
+                <label className="field-label">1. Reduction Method</label>
+                <div className="method-toggle-group">
+                  <button
+                    type="button"
+                    onClick={() => setCompositeMethod('pca')}
+                    className={`method-toggle-btn ${compositeMethod === 'pca' ? 'active' : ''}`}
+                  >
+                    <div className="method-top">
+                      <span className="method-name">PCA (1st Principal Component)</span>
+                      {compositeMethod === 'pca' && <span className="method-dot" />}
+                    </div>
+                    <span className="method-desc">Extracts the dominant eigenvector capturing maximum shared variance across transducers</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCompositeMethod('average')}
+                    className={`method-toggle-btn ${compositeMethod === 'average' ? 'active' : ''}`}
+                  >
+                    <div className="method-top">
+                      <span className="method-name">Z-Score Normalized Average</span>
+                      {compositeMethod === 'average' && <span className="method-dot" />}
+                    </div>
+                    <span className="method-desc">Standardizes scale discrepancies then averages across channels to cancel uncorrelated noise</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* 2. Channel Selection */}
+              <div className="composite-field-group">
+                <div className="source-select-header">
+                  <label className="field-label">2. Select Redundant Channels ({compositeSources.length} selected)</label>
+                  <div className="source-quick-actions">
+                    <button
+                      type="button"
+                      onClick={() => setCompositeSources([])}
+                      className="btn-tiny"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+                <div className="composite-sources-scroll">
+                  {numericColumns.map(col => {
+                    const isChecked = compositeSources.includes(col);
+                    return (
+                      <label key={col} className="corr-channel-item">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => {
+                            if (isChecked) {
+                              setCompositeSources(compositeSources.filter(c => c !== col));
+                            } else {
+                              setCompositeSources([...compositeSources, col]);
+                            }
+                          }}
+                          className="checkbox-custom"
+                        />
+                        <span className="channel-item-label" title={col}>{col}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 3. New Channel Name */}
+              <div className="composite-field-group">
+                <label className="field-label">3. Synthetic Sensor Name</label>
+                <input
+                  type="text"
+                  value={compositeName}
+                  onChange={(e) => setCompositeName(e.target.value)}
+                  placeholder="e.g. PCA_Temp_Cluster"
+                  className="field-input"
+                />
+              </div>
+
+              {compositeError && (
+                <div className="analytics-error-card">
+                  <AlertTriangle size={14} className="text-red-400" />
+                  <span>{compositeError}</span>
+                </div>
+              )}
+
+              {compositeSuccessMsg && (
+                <div className="composite-success-card">
+                  <Check size={16} className="text-emerald-400" />
+                  <span>{compositeSuccessMsg}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="composite-modal-footer">
+              <button
+                type="button"
+                onClick={() => setIsCombineModalOpen(false)}
+                className="btn btn-ghost"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateComposite}
+                disabled={isGeneratingComposite || compositeSources.length < 2 || !compositeName.trim()}
+                className="btn btn-primary"
+              >
+                {isGeneratingComposite ? <RefreshCw className="animate-spin" size={14} /> : <Combine size={14} />}
+                <span>Generate Composite Sensor</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+
