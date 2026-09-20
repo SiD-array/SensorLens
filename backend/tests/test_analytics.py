@@ -327,4 +327,22 @@ def test_feature_ranking_and_composite_sensor(sample_sensor_df):
     assert all(r["column"] != "sensor_1" for r in rankings_target)
     assert rankings_target[0]["score"] > 0.8
 
+    # 7. Verify all_sensors_rankings across all common columns
+    assert "all_sensors_rankings" in corr_target_json
+    assert "pearson" in corr_target_json["all_sensors_rankings"]
+    all_p = corr_target_json["all_sensors_rankings"]["pearson"]
+    # All other common sensors in the uploaded file should be present
+    assert len(all_p) >= 2
+    assert all(r["column"] != "sensor_1" for r in all_p)
+
+    # 8. Verify global_diagnosis dataset-level evaluation
+    assert "global_diagnosis" in corr_target_json
+    gdiag = corr_target_json["global_diagnosis"]
+    assert "recommended_algorithm" in gdiag
+    assert "suitability_scores" in gdiag
+    assert "breakdown" in gdiag
+    assert gdiag["total_sensors_analyzed"] >= 2
+    assert "linear_pct" in gdiag["breakdown"]
+
+
 

@@ -15,7 +15,9 @@ from app.services.analytics import (
     diagnose_sensor_pair,
     train_and_compare_models,
     rank_features_from_matrix,
-    generate_composite_sensor
+    generate_composite_sensor,
+    calculate_target_correlations_all_sensors,
+    diagnose_dataset_algorithms
 )
 
 router = APIRouter()
@@ -82,7 +84,7 @@ async def calculate_correlations_endpoint(
     """
     Computes correlation matrices across selected or all numeric channels
     pooled across one or multiple test runs. Also returns feature rankings
-    sorted by coupling strength under each algorithm (optionally relative to a target sensor).
+    across ALL common sensors relative to a target variable, and dataset-level diagnosis.
     """
     from main import uploaded_files_cache
 
@@ -90,6 +92,27 @@ async def calculate_correlations_endpoint(
     if not dfs:
         raise HTTPException(status_code=400, detail="No valid sensor dataset found.")
 
+    # 1. Pool across ALL common numeric columns first
+    pooled_df_all, all_common_cols = pool_datasets(dfs, None)
+    if pooled_df_all.empty or len(all_common_cols) < 2:
+        raise HTTPException(status_code=400, detail="At least 2 common numeric sensor columns are required across selected runs.")
+
+    target_clean = target_col.strip() if target_col and str(target_col).strip() else None
+    active_target = target_clean if (target_clean and target_clean in all_common_cols) else None
+
+    # 2. Compute Target Correlations across ALL common sensors (O(M) complexity)
+    all_sensors_rankings = {}
+    if active_target:
+        all_sensors_rankings = calculate_target_correlations_all_sensors(
+            pooled_df_all, active_target, all_common_cols
+        )
+
+    # 3. Global multi-sensor dataset diagnosis across all channels
+    global_diag = diagnose_dataset_algorithms(
+        pooled_df_all, all_common_cols, target_col=active_target
+    )
+
+    # 4. Resolve columns for NxN matrix heatmap (cap at 20 for matrix rendering performance)
     requested_cols = None
     if columns_json:
         try:
@@ -97,52 +120,54 @@ async def calculate_correlations_endpoint(
         except Exception:
             pass
 
-    pooled_df, common_cols = pool_datasets(dfs, requested_cols)
-    if pooled_df.empty or len(common_cols) < 2:
-        raise HTTPException(status_code=400, detail="At least 2 common numeric sensor columns are required across selected runs.")
-
-    target_clean = target_col.strip() if target_col and str(target_col).strip() else None
-
-    if target_clean and target_clean in common_cols:
-        remaining = [c for c in common_cols if c != target_clean]
-        cols = [target_clean] + remaining[:14]
+    req_algo = (algorithm or "all").lower()
+    if requested_cols:
+        sub_common = [c for c in requested_cols if c in all_common_cols]
+        if active_target and active_target not in sub_common:
+            sub_common = [active_target] + sub_common
+        matrix_cols = sub_common[:20] if len(sub_common) >= 2 else all_common_cols[:20]
+    elif active_target and all_sensors_rankings:
+        # Use target + top 19 drivers under chosen algorithm
+        ranking_key = req_algo if req_algo in all_sensors_rankings else "pearson"
+        top_drivers = [r["column"] for r in all_sensors_rankings.get(ranking_key, [])[:19]]
+        matrix_cols = [active_target] + top_drivers
     else:
-        cols = common_cols[:15] # default cap for matrix rendering performance
-    df_active = pooled_df[cols]
+        matrix_cols = all_common_cols[:20]
 
-    active_target = target_clean if (target_clean and target_clean in cols) else None
+    df_active = pooled_df_all[matrix_cols]
 
     results = {
-        "columns": cols,
+        "columns": matrix_cols,
+        "all_common_columns": all_common_cols,
         "target_col": active_target,
+        "all_sensors_rankings": all_sensors_rankings,
+        "global_diagnosis": global_diag,
         "available_algorithms": ["pearson", "spearman", "kendall", "fastdtw", "mutual_info"],
         "matrices": {},
         "feature_rankings": {},
         "total_runs": len(dfs),
-        "total_samples": len(df_active)
+        "total_samples": len(pooled_df_all)
     }
 
-    req_algo = (algorithm or "all").lower()
-
     if req_algo in ("all", "pearson"):
-        results["matrices"]["pearson"] = calculate_pearson_matrix(df_active, cols)["matrix"]
-        results["feature_rankings"]["pearson"] = rank_features_from_matrix(cols, results["matrices"]["pearson"], target_col=active_target)
+        results["matrices"]["pearson"] = calculate_pearson_matrix(df_active, matrix_cols)["matrix"]
+        results["feature_rankings"]["pearson"] = rank_features_from_matrix(matrix_cols, results["matrices"]["pearson"], target_col=active_target)
 
     if req_algo in ("all", "spearman"):
-        results["matrices"]["spearman"] = calculate_spearman_matrix(df_active, cols)["matrix"]
-        results["feature_rankings"]["spearman"] = rank_features_from_matrix(cols, results["matrices"]["spearman"], target_col=active_target)
+        results["matrices"]["spearman"] = calculate_spearman_matrix(df_active, matrix_cols)["matrix"]
+        results["feature_rankings"]["spearman"] = rank_features_from_matrix(matrix_cols, results["matrices"]["spearman"], target_col=active_target)
 
     if req_algo in ("all", "kendall"):
-        results["matrices"]["kendall"] = calculate_kendall_matrix(df_active, cols)["matrix"]
-        results["feature_rankings"]["kendall"] = rank_features_from_matrix(cols, results["matrices"]["kendall"], target_col=active_target)
+        results["matrices"]["kendall"] = calculate_kendall_matrix(df_active, matrix_cols)["matrix"]
+        results["feature_rankings"]["kendall"] = rank_features_from_matrix(matrix_cols, results["matrices"]["kendall"], target_col=active_target)
 
     if req_algo in ("all", "fastdtw"):
-        results["matrices"]["fastdtw"] = calculate_dtw_matrix(df_active, cols)["matrix"]
-        results["feature_rankings"]["fastdtw"] = rank_features_from_matrix(cols, results["matrices"]["fastdtw"], target_col=active_target)
+        results["matrices"]["fastdtw"] = calculate_dtw_matrix(df_active, matrix_cols)["matrix"]
+        results["feature_rankings"]["fastdtw"] = rank_features_from_matrix(matrix_cols, results["matrices"]["fastdtw"], target_col=active_target)
 
     if req_algo in ("all", "mutual_info"):
-        results["matrices"]["mutual_info"] = calculate_mutual_info_matrix(df_active, cols)["matrix"]
-        results["feature_rankings"]["mutual_info"] = rank_features_from_matrix(cols, results["matrices"]["mutual_info"], target_col=active_target)
+        results["matrices"]["mutual_info"] = calculate_mutual_info_matrix(df_active, matrix_cols)["matrix"]
+        results["feature_rankings"]["mutual_info"] = rank_features_from_matrix(matrix_cols, results["matrices"]["mutual_info"], target_col=active_target)
 
     return results
 

@@ -24,9 +24,33 @@ export interface FeatureRanking {
   rank: number;
 }
 
+export interface GlobalDiagnosis {
+  recommended_algorithm: string;
+  explanation: string;
+  suitability_scores: {
+    pearson: number;
+    spearman: number;
+    kendall: number;
+    fastdtw: number;
+    mutual_info: number;
+  };
+  breakdown: {
+    linear_pct: number;
+    monotonic_pct: number;
+    complex_nonlinear_pct: number;
+    phase_lagged_pct: number;
+    weak_pct: number;
+  };
+  total_sensors_analyzed: number;
+  target_col?: string | null;
+}
+
 interface CorrelationData {
   columns: string[];
+  all_common_columns?: string[];
   target_col?: string | null;
+  all_sensors_rankings?: Record<string, FeatureRanking[]>;
+  global_diagnosis?: GlobalDiagnosis;
   available_algorithms: string[];
   matrices: Record<string, number[][]>;
   feature_rankings?: Record<string, FeatureRanking[]>;
@@ -182,6 +206,8 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
   // -------------------------------------------------------------
   const [targetVariable, setTargetVariable] = useState<string>('');
   const [stageViewMode, setStageViewMode] = useState<'tornado' | 'heatmap'>('tornado');
+  const [sensorScope, setSensorScope] = useState<'top20' | 'all'>('top20');
+  const [diagTab, setDiagTab] = useState<'global' | 'pair'>('global');
   const [selectedCorrAlgo, setSelectedCorrAlgo] = useState<'pearson' | 'spearman' | 'kendall' | 'fastdtw' | 'mutual_info'>('pearson');
   const [selectedCorrChannels, setSelectedCorrChannels] = useState<string[]>([]);
   const [corrData, setCorrData] = useState<CorrelationData | null>(null);
@@ -210,14 +236,32 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
     }
   }, [numColsKey]);
 
-  // Active rankings for the selected correlation algorithm
+  // Active rankings for the selected correlation algorithm (all common sensors or matrix)
   const activeRankings = useMemo(() => {
-    if (!corrData?.feature_rankings) return {};
-    const list = corrData.feature_rankings[selectedCorrAlgo] || [];
+    if (!corrData) return {};
+    const list = corrData.all_sensors_rankings?.[selectedCorrAlgo]
+      || corrData.feature_rankings?.[selectedCorrAlgo]
+      || [];
     const map: Record<string, FeatureRanking> = {};
     list.forEach(item => { map[item.column] = item; });
     return map;
   }, [corrData, selectedCorrAlgo]);
+
+  // Active target predictive drivers list, sorted according to active algorithm
+  const activeDrivers = useMemo(() => {
+    if (!corrData) return [];
+    const rankings = corrData.all_sensors_rankings?.[selectedCorrAlgo]
+      || corrData.feature_rankings?.[selectedCorrAlgo]
+      || [];
+    const list = corrData.target_col
+      ? rankings.filter(r => r.column !== corrData.target_col)
+      : rankings;
+
+    if (sensorScope === 'top20') {
+      return list.slice(0, 20);
+    }
+    return list;
+  }, [corrData, selectedCorrAlgo, sensorScope]);
 
   // Displayed channels sorted by rank or alpha
   const displayChannels = useMemo(() => {
@@ -234,8 +278,8 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
     return cols;
   }, [numericColumns, channelSortMode, activeRankings]);
 
-  // Algorithm-aware Top 15 selection
-  const handleSelectTop15 = () => {
+  // Algorithm-aware Top 20 selection
+  const handleSelectTop20 = () => {
     if (Object.keys(activeRankings).length > 0) {
       const ranked = [...numericColumns].sort((a, b) => {
         const rA = activeRankings[a]?.rank ?? 9999;
@@ -244,16 +288,16 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
       });
       if (targetVariable && numericColumns.includes(targetVariable)) {
         const others = ranked.filter(c => c !== targetVariable);
-        setSelectedCorrChannels([targetVariable, ...others.slice(0, 14)]);
+        setSelectedCorrChannels([targetVariable, ...others.slice(0, 19)]);
       } else {
-        setSelectedCorrChannels(ranked.slice(0, 15));
+        setSelectedCorrChannels(ranked.slice(0, 20));
       }
     } else {
       if (targetVariable && numericColumns.includes(targetVariable)) {
         const others = numericColumns.filter(c => c !== targetVariable);
-        setSelectedCorrChannels([targetVariable, ...others.slice(0, 14)]);
+        setSelectedCorrChannels([targetVariable, ...others.slice(0, 19)]);
       } else {
-        setSelectedCorrChannels(numericColumns.slice(0, 15));
+        setSelectedCorrChannels(numericColumns.slice(0, 20));
       }
     }
   };
@@ -534,13 +578,9 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
   // CHART BUILDERS
   // -------------------------------------------------------------
   const getTargetTornadoOption = () => {
-    if (!corrData?.feature_rankings || !corrData.target_col) return {};
-    const rankings = corrData.feature_rankings[selectedCorrAlgo] || [];
-    if (rankings.length === 0) return {};
+    if (!corrData || activeDrivers.length === 0) return {};
 
-    // Drivers excluding target itself, cap at top 15
-    const drivers = rankings.filter(r => r.column !== corrData.target_col).slice(0, 15);
-    const reversed = [...drivers].reverse();
+    const reversed = [...activeDrivers].reverse();
     const categories = reversed.map(d => d.column);
     const values = reversed.map(d => d.signed_score !== undefined ? d.signed_score : d.score);
 
@@ -555,13 +595,18 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
           const d = reversed[params[0].dataIndex];
           const val = params[0].value;
           const sign = val > 0 ? '+' : '';
-          return `<b>${d.column}</b> ↔ <b>${corrData.target_col}</b><br/>` +
+          return `<b>${d.column}</b> ↔ <b>${corrData.target_col || 'Target'}</b><br/>` +
                  `Coupling (${selectedCorrAlgo.toUpperCase()}): <b>${sign}${typeof val === 'number' ? val.toFixed(4) : val}</b><br/>` +
+                 `Rank: <b>#${d.rank}</b> of ${corrData.all_common_columns?.length || activeDrivers.length}<br/>` +
                  `Direction: <b style="color:${val >= 0 ? '#34d399' : '#f43f5e'}">${val >= 0 ? 'Positive Coupling' : 'Inverse / Negative Coupling'}</b><br/>` +
                  `<span style="font-size:0.72rem;color:#94a3b8">Click bar to view full non-linear & lag diagnostic</span>`;
         }
       },
       grid: { left: '22%', right: '12%', bottom: '10%', top: '6%', containLabel: true },
+      dataZoom: activeDrivers.length > 25 ? [
+        { type: 'inside', yAxisIndex: 0, start: Math.max(0, 100 - Math.round((25 / activeDrivers.length) * 100)), end: 100 },
+        { type: 'slider', yAxisIndex: 0, right: 8, width: 14, borderColor: 'rgba(255,255,255,0.1)' }
+      ] : undefined,
       xAxis: {
         type: 'value',
         name: `${selectedCorrAlgo.toUpperCase()} Impact Score`,
@@ -1120,12 +1165,12 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
               <span className="section-title">3. Select Sensors ({selectedCorrChannels.length}/{numericColumns.length} common)</span>
               <div className="sidebar-quick-btns">
                 <button 
-                  onClick={handleSelectTop15}
+                  onClick={handleSelectTop20}
                   className="btn-tiny"
                   disabled={numericColumns.length === 0}
-                  title={targetVariable ? `Select target and Top 14 drivers of ${targetVariable}` : "Select Top 15 sensors with highest correlation coupling"}
+                  title={targetVariable ? `Select target and Top 19 drivers of ${targetVariable}` : "Select Top 20 sensors with highest correlation coupling"}
                 >
-                  Top 15 {targetVariable ? 'Drivers ★' : (corrData?.feature_rankings?.[selectedCorrAlgo] ? '★' : '')}
+                  Top 20 {targetVariable ? 'Drivers ★' : (corrData?.all_sensors_rankings?.[selectedCorrAlgo] || corrData?.feature_rankings?.[selectedCorrAlgo] ? '★' : '')}
                 </button>
                 <button 
                   onClick={() => setSelectedCorrChannels([])}
@@ -1237,83 +1282,132 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
           <main className="analytics-main-stage">
             {corrData ? (
               <div className="corr-stage-container">
-                {stageViewMode === 'tornado' && corrData.target_col ? (
-                  /* Target Drivers Tornado Impact Section */
-                  <div className="tornado-chart-wrapper">
-                    <div className="tornado-toolbar">
-                      <div className="tornado-title-group">
-                        <div className="tornado-title-row">
-                          <Target size={18} className="text-accent-cyan" />
-                          <span className="tornado-title">Predictive Drivers Impact</span>
-                          <span className="tornado-target-chip">
-                            <Target size={11} /> {corrData.target_col}
+                {stageViewMode === 'tornado' ? (
+                  corrData.target_col ? (
+                    /* Target Drivers Tornado Impact Section */
+                    <div className="tornado-chart-wrapper">
+                      <div className="tornado-toolbar">
+                        <div className="tornado-title-group">
+                          <div className="tornado-title-row">
+                            <Target size={18} className="text-accent-cyan" />
+                            <span className="tornado-title">Predictive Drivers Impact</span>
+                            <span className="tornado-target-chip">
+                              <Target size={11} /> {corrData.target_col}
+                            </span>
+                          </div>
+                          <span className="tornado-subtitle">
+                            Features ranked by coupling magnitude under {selectedCorrAlgo.toUpperCase()}. Click any bar to diagnose pair.
                           </span>
                         </div>
-                        <span className="tornado-subtitle">
-                          Features ranked by coupling magnitude under {selectedCorrAlgo.toUpperCase()}. Click any bar to diagnose pair.
-                        </span>
-                      </div>
 
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <div className="stage-view-toggles">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                          {/* Top 20 vs All Common Sensors Scope Toggle */}
+                          <div className="sensor-scope-toggles">
+                            <button
+                              type="button"
+                              className={`sensor-scope-btn ${sensorScope === 'top20' ? 'active' : ''}`}
+                              onClick={() => setSensorScope('top20')}
+                              title="Display top 20 predictive drivers sorted by active algorithm"
+                            >
+                              <Star size={11} />
+                              <span>Top 20 Drivers</span>
+                            </button>
+                            <button
+                              type="button"
+                              className={`sensor-scope-btn ${sensorScope === 'all' ? 'active' : ''}`}
+                              onClick={() => setSensorScope('all')}
+                              title={`Display all common sensors (${corrData.all_common_columns?.length || activeDrivers.length}) sorted by active algorithm`}
+                            >
+                              <Layers size={11} />
+                              <span>All Sensors ({corrData.all_common_columns?.length || activeDrivers.length})</span>
+                            </button>
+                          </div>
+
+                          {/* Stage View Toggles */}
+                          <div className="stage-view-toggles">
+                            <button
+                              type="button"
+                              className="stage-view-btn active"
+                              onClick={() => setStageViewMode('tornado')}
+                              title="View horizontal tornado impact chart of drivers"
+                            >
+                              <BarChart3 size={12} />
+                              <span>Target Drivers</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="stage-view-btn"
+                              onClick={() => setStageViewMode('heatmap')}
+                              title="View full NxN correlation heatmap"
+                            >
+                              <Grid3X3 size={12} />
+                              <span>Matrix</span>
+                            </button>
+                          </div>
+
                           <button
                             type="button"
-                            className="stage-view-btn active"
-                            onClick={() => setStageViewMode('tornado')}
-                            title="View horizontal tornado impact chart of drivers"
+                            onClick={handleExportToML}
+                            className="btn-send-to-ml"
+                            title="Transfer target variable and top predictive drivers directly to ML Model Studio"
                           >
-                            <BarChart3 size={12} />
-                            <span>Target Drivers</span>
-                          </button>
-                          <button
-                            type="button"
-                            className="stage-view-btn"
-                            onClick={() => setStageViewMode('heatmap')}
-                            title="View full NxN correlation heatmap"
-                          >
-                            <Grid3X3 size={12} />
-                            <span>Matrix</span>
+                            <Sparkles size={13} />
+                            <span>Train ML Models 🚀</span>
                           </button>
                         </div>
+                      </div>
 
+                      <div className="tornado-canvas-container">
+                        <ReactECharts
+                          option={getTargetTornadoOption()}
+                          onEvents={{
+                            click: (params: any) => {
+                              if (params.name && corrData.target_col) {
+                                handleInspectPair(params.name, corrData.target_col);
+                                setDiagTab('pair');
+                              }
+                            }
+                          }}
+                          style={{ height: '100%', width: '100%' }}
+                          theme="dark"
+                        />
+                      </div>
+
+                      <div className="tornado-legend-bar">
+                        <div className="legend-item">
+                          <span className="legend-dot-pos" />
+                          <span>Positive Coupling (Feature increases as Target increases)</span>
+                        </div>
+                        <div className="legend-item">
+                          <span className="legend-dot-neg" />
+                          <span>Inverse Coupling (Feature decreases as Target increases)</span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    /* Target Empty Prompt */
+                    <div className="target-empty-prompt">
+                      <Target size={40} className="text-accent-cyan" style={{ opacity: 0.8 }} />
+                      <h3>No Target Variable Selected</h3>
+                      <p>
+                        Select a target sensor/metric in Section 1 on the left to analyze and rank which common sensors are the strongest predictive drivers.
+                      </p>
+                      {numericColumns.length > 0 && (
                         <button
                           type="button"
-                          onClick={handleExportToML}
-                          className="btn-send-to-ml"
-                          title="Transfer target variable and top predictive drivers directly to ML Model Studio"
+                          className="btn-select-target-action"
+                          onClick={() => {
+                            const first = numericColumns[0];
+                            setTargetVariable(first);
+                            handleFetchCorrelations(undefined, first);
+                          }}
                         >
-                          <Sparkles size={13} />
-                          <span>Train ML Models 🚀</span>
+                          <Target size={14} />
+                          <span>Set '{numericColumns[0]}' as Target Variable</span>
                         </button>
-                      </div>
+                      )}
                     </div>
-
-                    <div className="tornado-canvas-container">
-                      <ReactECharts
-                        option={getTargetTornadoOption()}
-                        onEvents={{
-                          click: (params: any) => {
-                            if (params.name && corrData.target_col) {
-                              handleInspectPair(params.name, corrData.target_col);
-                            }
-                          }
-                        }}
-                        style={{ height: '100%', width: '100%' }}
-                        theme="dark"
-                      />
-                    </div>
-
-                    <div className="tornado-legend-bar">
-                      <div className="legend-item">
-                        <span className="legend-dot-pos" />
-                        <span>Positive Coupling (Feature increases as Target increases)</span>
-                      </div>
-                      <div className="legend-item">
-                        <span className="legend-dot-neg" />
-                        <span>Inverse Coupling (Feature decreases as Target increases)</span>
-                      </div>
-                    </div>
-                  </div>
+                  )
                 ) : (
                   /* Full Heatmap Section */
                   <div className="corr-heatmap-wrapper">
@@ -1331,28 +1425,26 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
                       </div>
 
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        {corrData.target_col && (
-                          <div className="stage-view-toggles">
-                            <button
-                              type="button"
-                              className="stage-view-btn"
-                              onClick={() => setStageViewMode('tornado')}
-                              title="View horizontal tornado impact chart of drivers"
-                            >
-                              <BarChart3 size={12} />
-                              <span>Target Drivers</span>
-                            </button>
-                            <button
-                              type="button"
-                              className="stage-view-btn active"
-                              onClick={() => setStageViewMode('heatmap')}
-                              title="View full NxN correlation heatmap"
-                            >
-                              <Grid3X3 size={12} />
-                              <span>Matrix</span>
-                            </button>
-                          </div>
-                        )}
+                        <div className="stage-view-toggles">
+                          <button
+                            type="button"
+                            className="stage-view-btn"
+                            onClick={() => setStageViewMode('tornado')}
+                            title="View horizontal tornado impact chart of drivers"
+                          >
+                            <BarChart3 size={12} />
+                            <span>Target Drivers</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="stage-view-btn active"
+                            onClick={() => setStageViewMode('heatmap')}
+                            title="View full NxN correlation heatmap"
+                          >
+                            <Grid3X3 size={12} />
+                            <span>Matrix</span>
+                          </button>
+                        </div>
                         <span className="corr-toolbar-hint">
                           Click any cell for pair diagnostic
                         </span>
@@ -1367,6 +1459,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
                               const cA = corrData.columns[params.data[0]];
                               const cB = corrData.columns[params.data[1]];
                               handleInspectPair(cA, cB);
+                              setDiagTab('pair');
                             }
                           }
                         }}
@@ -1377,78 +1470,165 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
                   </div>
                 )}
 
-                {/* Pairwise Deep-Dive & Recommender Sidebar */}
+                {/* Pairwise & Dataset-Wide Diagnostic Card */}
                 <div className="corr-pair-deepdive-card">
-                  <div className="deepdive-header">
-                    <Sparkles size={16} className="text-accent-cyan" />
-                    <h4>Pairwise Diagnostic & Recommendation</h4>
+                  <div className="deepdive-header" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Sparkles size={16} className="text-accent-cyan" />
+                        <h4 style={{ margin: 0, fontSize: '0.96rem' }}>Correlation Diagnosis</h4>
+                      </div>
+                    </div>
+
+                    {/* Mode Tabs: Global Dataset vs Single Pair */}
+                    <div className="diag-mode-tabs">
+                      <button
+                        type="button"
+                        className={`diag-tab-btn ${diagTab === 'global' ? 'active' : ''}`}
+                        onClick={() => setDiagTab('global')}
+                        title="Evaluate recommended algorithm across all common sensors"
+                      >
+                        <Award size={12} />
+                        <span>🌐 Global (All Sensors)</span>
+                      </button>
+                      <button
+                        type="button"
+                        className={`diag-tab-btn ${diagTab === 'pair' ? 'active' : ''}`}
+                        onClick={() => setDiagTab('pair')}
+                        title="Inspect single sensor pair with scatter plot"
+                      >
+                        <Sparkles size={12} />
+                        <span>🔍 Single Pair</span>
+                      </button>
+                    </div>
                   </div>
 
-                  {isLoadingPair ? (
-                    <div className="deepdive-loading">
-                      <RefreshCw className="animate-spin text-accent-cyan" size={24} />
-                      <span>{selectedPair ? `Diagnosing ${selectedPair.col_a} vs ${selectedPair.col_b}...` : 'Diagnosing sensor coupling...'}</span>
-                    </div>
-                  ) : pairDiag ? (
-                    <div className="deepdive-content">
-                      <div className="pair-names-badge">
-                        <span className="pair-col-name">{pairDiag.col_a}</span>
-                        <span className="text-muted">↔</span>
-                        <span className="pair-col-name">{pairDiag.col_b}</span>
-                        {pairDiag.total_runs && pairDiag.total_runs > 1 && (
-                          <span className="pair-runs-chip" title={`Sample points pooled across ${pairDiag.total_runs} test runs`}>
-                            <Layers size={10} /> {pairDiag.total_runs} runs
-                          </span>
-                        )}
+                  {diagTab === 'global' && corrData.global_diagnosis ? (
+                    /* Global Dataset-Wide Recommendation */
+                    <div className="global-diag-card">
+                      <div className="global-champ-banner">
+                        <div className="global-champ-badge-row">
+                          <Award size={18} className="text-emerald-400" />
+                          <span className="global-champ-title">{corrData.global_diagnosis.recommended_algorithm}</span>
+                          <span className="global-champ-scope-badge">All Sensors</span>
+                        </div>
+                        <p className="global-champ-desc">{corrData.global_diagnosis.explanation}</p>
                       </div>
 
-                      {/* Recommender Alert Box */}
-                      <div className="recommender-banner">
-                        <div className="recommender-title-row">
-                          <Award size={15} className="text-emerald-400" />
-                          <span className="recommender-title">Recommended: <b>{pairDiag.recommended_algorithm}</b></span>
-                        </div>
-                        <p className="recommender-desc">{pairDiag.explanation}</p>
-                      </div>
-
-                      {/* Scores Comparison Table */}
-                      <div className="scores-compare-grid">
-                        <div className="score-item">
-                          <span className="score-algo">Pearson (r)</span>
-                          <span className="score-val">{pairDiag.scores.pearson.toFixed(3)}</span>
-                        </div>
-                        <div className="score-item">
-                          <span className="score-algo">Spearman (ρ)</span>
-                          <span className="score-val">{pairDiag.scores.spearman.toFixed(3)}</span>
-                        </div>
-                        <div className="score-item">
-                          <span className="score-algo">Kendall (τ)</span>
-                          <span className="score-val">{pairDiag.scores.kendall.toFixed(3)}</span>
-                        </div>
-                        <div className="score-item">
-                          <span className="score-algo">FastDTW</span>
-                          <span className="score-val">{pairDiag.scores.fastdtw.toFixed(3)}</span>
-                        </div>
-                        <div className="score-item">
-                          <span className="score-algo">Mutual Info</span>
-                          <span className="score-val">{pairDiag.scores.mutual_info.toFixed(3)}</span>
+                      <div className="global-breakdown-card">
+                        <span className="global-breakdown-title">Sensor Dynamics ({corrData.global_diagnosis.total_sensors_analyzed} Channels Evaluated)</span>
+                        <div className="global-breakdown-grid">
+                          <div className="breakdown-stat-item">
+                            <span className="stat-item-label">Linear Proportional</span>
+                            <span className="stat-item-val" style={{ color: '#38bdf8' }}>{corrData.global_diagnosis.breakdown.linear_pct}%</span>
+                          </div>
+                          <div className="breakdown-stat-item">
+                            <span className="stat-item-label">Monotonic Curves</span>
+                            <span className="stat-item-val" style={{ color: '#a78bfa' }}>{corrData.global_diagnosis.breakdown.monotonic_pct}%</span>
+                          </div>
+                          <div className="breakdown-stat-item">
+                            <span className="stat-item-label">Complex Non-Linear</span>
+                            <span className="stat-item-val" style={{ color: '#f43f5e' }}>{corrData.global_diagnosis.breakdown.complex_nonlinear_pct}%</span>
+                          </div>
+                          <div className="breakdown-stat-item">
+                            <span className="stat-item-label">Phase / Time Shifted</span>
+                            <span className="stat-item-val" style={{ color: '#fbbf24' }}>{corrData.global_diagnosis.breakdown.phase_lagged_pct}%</span>
+                          </div>
                         </div>
                       </div>
 
-                      {/* Scatter Plot */}
-                      <div className="pair-scatter-box">
-                        <ReactECharts
-                          option={getPairScatterOption()}
-                          style={{ height: '180px', width: '100%' }}
-                          theme="dark"
-                        />
+                      <div className="suitability-list-card">
+                        <span className="global-breakdown-title">Algorithm Suitability Across Dataset</span>
+                        {[
+                          { key: 'pearson', label: 'Pearson (r)', val: corrData.global_diagnosis.suitability_scores.pearson, color: '#38bdf8' },
+                          { key: 'spearman', label: 'Spearman (ρ)', val: corrData.global_diagnosis.suitability_scores.spearman, color: '#a78bfa' },
+                          { key: 'kendall', label: 'Kendall (τ)', val: corrData.global_diagnosis.suitability_scores.kendall, color: '#818cf8' },
+                          { key: 'fastdtw', label: 'FastDTW', val: corrData.global_diagnosis.suitability_scores.fastdtw, color: '#fbbf24' },
+                          { key: 'mutual_info', label: 'Mutual Info', val: corrData.global_diagnosis.suitability_scores.mutual_info, color: '#f43f5e' }
+                        ].map(item => (
+                          <div key={item.key} className="suitability-item">
+                            <div className="suitability-item-header">
+                              <span>{item.label}</span>
+                              <b>{item.val}%</b>
+                            </div>
+                            <div className="suitability-bar-track">
+                              <div
+                                className="suitability-bar-fill"
+                                style={{ width: `${item.val}%`, background: item.color }}
+                              />
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   ) : (
-                    <div className="deepdive-empty">
-                      <HelpCircle size={32} className="text-muted" />
-                      <span>Click any cell on the matrix to diagnose sensor interaction</span>
-                    </div>
+                    /* Single Pair Deep-Dive */
+                    isLoadingPair ? (
+                      <div className="deepdive-loading">
+                        <RefreshCw className="animate-spin text-accent-cyan" size={24} />
+                        <span>{selectedPair ? `Diagnosing ${selectedPair.col_a} vs ${selectedPair.col_b}...` : 'Diagnosing sensor coupling...'}</span>
+                      </div>
+                    ) : pairDiag ? (
+                      <div className="deepdive-content">
+                        <div className="pair-names-badge">
+                          <span className="pair-col-name">{pairDiag.col_a}</span>
+                          <span className="text-muted">↔</span>
+                          <span className="pair-col-name">{pairDiag.col_b}</span>
+                          {pairDiag.total_runs && pairDiag.total_runs > 1 && (
+                            <span className="pair-runs-chip" title={`Sample points pooled across ${pairDiag.total_runs} test runs`}>
+                              <Layers size={10} /> {pairDiag.total_runs} runs
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Recommender Alert Box */}
+                        <div className="recommender-banner">
+                          <div className="recommender-title-row">
+                            <Award size={15} className="text-emerald-400" />
+                            <span className="recommender-title">Recommended: <b>{pairDiag.recommended_algorithm}</b></span>
+                          </div>
+                          <p className="recommender-desc">{pairDiag.explanation}</p>
+                        </div>
+
+                        {/* Scores Comparison Table */}
+                        <div className="scores-compare-grid">
+                          <div className="score-item">
+                            <span className="score-algo">Pearson (r)</span>
+                            <span className="score-val">{pairDiag.scores.pearson.toFixed(3)}</span>
+                          </div>
+                          <div className="score-item">
+                            <span className="score-algo">Spearman (ρ)</span>
+                            <span className="score-val">{pairDiag.scores.spearman.toFixed(3)}</span>
+                          </div>
+                          <div className="score-item">
+                            <span className="score-algo">Kendall (τ)</span>
+                            <span className="score-val">{pairDiag.scores.kendall.toFixed(3)}</span>
+                          </div>
+                          <div className="score-item">
+                            <span className="score-algo">FastDTW</span>
+                            <span className="score-val">{pairDiag.scores.fastdtw.toFixed(3)}</span>
+                          </div>
+                          <div className="score-item">
+                            <span className="score-algo">Mutual Info</span>
+                            <span className="score-val">{pairDiag.scores.mutual_info.toFixed(3)}</span>
+                          </div>
+                        </div>
+
+                        {/* Scatter Plot */}
+                        <div className="pair-scatter-box">
+                          <ReactECharts
+                            option={getPairScatterOption()}
+                            style={{ height: '180px', width: '100%' }}
+                            theme="dark"
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="deepdive-empty">
+                        <HelpCircle size={32} className="text-muted" />
+                        <span>Click any driver bar or matrix cell to diagnose single sensor interaction</span>
+                      </div>
+                    )
                   )}
                 </div>
               </div>

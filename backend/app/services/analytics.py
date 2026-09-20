@@ -452,6 +452,317 @@ def diagnose_sensor_pair(df: pd.DataFrame, col_a: str, col_b: str) -> Dict[str, 
     }
 
 
+def calculate_target_correlations_all_sensors(
+    df: pd.DataFrame,
+    target_col: str,
+    all_cols: List[str]
+) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Computes correlations of target_col against ALL other common sensors in all_cols
+    across all 5 algorithms. Highly efficient (O(M) scaling).
+    Returns rankings for all sensors sorted by magnitude under each algorithm.
+    """
+    candidate_cols = [c for c in all_cols if c != target_col and c in df.columns]
+    if not candidate_cols or target_col not in df.columns:
+        return {}
+
+    cols_to_use = [target_col] + candidate_cols
+    sub = df[cols_to_use].copy()
+    for c in cols_to_use:
+        sub[c] = pd.to_numeric(sub[c], errors="coerce")
+    sub = sub.dropna().reset_index(drop=True)
+
+    if len(sub) < 4:
+        return {}
+
+    target_series = sub[target_col]
+    features_df = sub[candidate_cols]
+
+    rankings: Dict[str, List[Dict[str, Any]]] = {
+        "pearson": [],
+        "spearman": [],
+        "kendall": [],
+        "fastdtw": [],
+        "mutual_info": []
+    }
+
+    # 1. Pearson (vectorized)
+    try:
+        p_corr = features_df.corrwith(target_series, method="pearson").fillna(0.0)
+    except Exception:
+        p_corr = pd.Series(0.0, index=candidate_cols)
+
+    # 2. Spearman (vectorized)
+    try:
+        s_corr = features_df.corrwith(target_series, method="spearman").fillna(0.0)
+    except Exception:
+        s_corr = pd.Series(0.0, index=candidate_cols)
+
+    # 3. Kendall (vectorized)
+    try:
+        k_corr = features_df.corrwith(target_series, method="kendall").fillna(0.0)
+    except Exception:
+        k_corr = pd.Series(0.0, index=candidate_cols)
+
+    # 4. FastDTW against target (resampled grid for high performance O(M))
+    dtw_scores = {}
+    target_vals = target_series.values
+    t_min, t_max = np.min(target_vals), np.max(target_vals)
+    t_norm = (target_vals - t_min) / max(t_max - t_min, 1e-6)
+    t_interp = interpolate_series(t_norm, target_length=40)
+
+    for c in candidate_cols:
+        try:
+            f_vals = features_df[c].values
+            f_min, f_max = np.min(f_vals), np.max(f_vals)
+            f_norm = (f_vals - f_min) / max(f_max - f_min, 1e-6)
+            f_interp = interpolate_series(f_norm, target_length=40)
+            dist, _ = fastdtw(t_interp, f_interp, dist=lambda a, b: abs(a - b))
+            sim = float(1.0 / (1.0 + (dist / 40.0)))
+            # Inherit sign from Pearson/Spearman for directionality
+            s_val = p_corr.get(c, 0.0)
+            signed_dtw = round(sim if s_val >= 0 else -sim, 4)
+            dtw_scores[c] = (round(sim, 4), signed_dtw)
+        except Exception:
+            dtw_scores[c] = (0.0, 0.0)
+
+    # 5. Mutual Information (all candidate cols in one regression call)
+    mi_scores = {}
+    try:
+        mi_vals = mutual_info_regression(features_df.values, target_series.values, random_state=42)
+        for idx, c in enumerate(candidate_cols):
+            val = float(np.tanh(mi_vals[idx]))
+            s_val = s_corr.get(c, 0.0)
+            signed_mi = round(val if s_val >= 0 else -val, 4)
+            mi_scores[c] = (round(val, 4), signed_mi)
+    except Exception:
+        for c in candidate_cols:
+            mi_scores[c] = (0.0, 0.0)
+
+    # Build and rank lists for each algorithm
+    for c in candidate_cols:
+        # Pearson
+        pv = round(float(p_corr.get(c, 0.0)), 4)
+        rankings["pearson"].append({
+            "column": c,
+            "score": round(abs(pv), 4),
+            "signed_score": pv,
+            "direction": "positive" if pv >= 0 else "negative"
+        })
+
+        # Spearman
+        sv = round(float(s_corr.get(c, 0.0)), 4)
+        rankings["spearman"].append({
+            "column": c,
+            "score": round(abs(sv), 4),
+            "signed_score": sv,
+            "direction": "positive" if sv >= 0 else "negative"
+        })
+
+        # Kendall
+        kv = round(float(k_corr.get(c, 0.0)), 4)
+        rankings["kendall"].append({
+            "column": c,
+            "score": round(abs(kv), 4),
+            "signed_score": kv,
+            "direction": "positive" if kv >= 0 else "negative"
+        })
+
+        # FastDTW
+        dtw_mag, dtw_signed = dtw_scores[c]
+        rankings["fastdtw"].append({
+            "column": c,
+            "score": dtw_mag,
+            "signed_score": dtw_signed,
+            "direction": "positive" if dtw_signed >= 0 else "negative"
+        })
+
+        # Mutual Info
+        mi_mag, mi_signed = mi_scores[c]
+        rankings["mutual_info"].append({
+            "column": c,
+            "score": mi_mag,
+            "signed_score": mi_signed,
+            "direction": "positive" if mi_signed >= 0 else "negative"
+        })
+
+    # Sort each algorithm descending by score and assign 1-based ranks
+    for algo in rankings:
+        rankings[algo].sort(key=lambda x: x["score"], reverse=True)
+        for idx, item in enumerate(rankings[algo]):
+            item["rank"] = idx + 1
+
+    return rankings
+
+
+def diagnose_dataset_algorithms(
+    df: pd.DataFrame,
+    columns: List[str],
+    target_col: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Evaluates ALL sensors across the dataset (relative to target_col, or across
+    common sensor channels) to diagnose global data behavior and recommend the
+    optimal correlation algorithm.
+    """
+    clean_cols = [c for c in columns if c in df.columns]
+    if len(clean_cols) < 2:
+        return {
+            "recommended_algorithm": "Pearson Correlation",
+            "explanation": "Insufficient channels to compute dataset diagnosis.",
+            "suitability_scores": {"pearson": 100, "spearman": 80, "kendall": 70, "fastdtw": 50, "mutual_info": 50},
+            "breakdown": {"linear_pct": 100, "monotonic_pct": 0, "complex_nonlinear_pct": 0, "phase_lagged_pct": 0, "weak_pct": 0},
+            "total_sensors_analyzed": len(clean_cols)
+        }
+
+    sub = df[clean_cols].copy()
+    for c in clean_cols:
+        sub[c] = pd.to_numeric(sub[c], errors="coerce")
+    sub = sub.dropna().reset_index(drop=True)
+
+    if len(sub) < 5:
+        return {
+            "recommended_algorithm": "Pearson Correlation",
+            "explanation": "Insufficient valid rows to compute multi-sensor diagnosis.",
+            "suitability_scores": {"pearson": 100, "spearman": 80, "kendall": 70, "fastdtw": 50, "mutual_info": 50},
+            "breakdown": {"linear_pct": 100, "monotonic_pct": 0, "complex_nonlinear_pct": 0, "phase_lagged_pct": 0, "weak_pct": 0},
+            "total_sensors_analyzed": len(clean_cols)
+        }
+
+    # Determine pairs to analyze
+    pairs: List[Tuple[str, str]] = []
+    if target_col and target_col in clean_cols:
+        for c in clean_cols:
+            if c != target_col:
+                pairs.append((target_col, c))
+    else:
+        # Cross-pairwise sample across channels (cap at 45 pairs for speed)
+        n = len(clean_cols)
+        for i in range(n):
+            for j in range(i + 1, n):
+                pairs.append((clean_cols[i], clean_cols[j]))
+                if len(pairs) >= 45:
+                    break
+            if len(pairs) >= 45:
+                break
+
+    if not pairs:
+        pairs = [(clean_cols[0], clean_cols[1])]
+
+    linear_count = 0
+    monotonic_count = 0
+    nonlinear_count = 0
+    phase_lagged_count = 0
+    weak_count = 0
+
+    # Evaluate each pair
+    for c1, c2 in pairs:
+        s1 = sub[c1].values
+        s2 = sub[c2].values
+
+        try:
+            r_p = abs(float(scipy.stats.pearsonr(s1, s2)[0]))
+            if np.isnan(r_p): r_p = 0.0
+        except Exception:
+            r_p = 0.0
+
+        try:
+            r_s = abs(float(scipy.stats.spearmanr(s1, s2)[0]))
+            if np.isnan(r_s): r_s = 0.0
+        except Exception:
+            r_s = 0.0
+
+        try:
+            mi_raw = mutual_info_regression(s1.reshape(-1, 1), s2, random_state=42)[0]
+            mi_val = float(np.tanh(mi_raw))
+        except Exception:
+            mi_val = 0.0
+
+        try:
+            n1 = (s1 - np.min(s1)) / max(np.max(s1) - np.min(s1), 1e-6)
+            n2 = (s2 - np.min(s2)) / max(np.max(s2) - np.min(s2), 1e-6)
+            dist, _ = fastdtw(interpolate_series(n1, 30), interpolate_series(n2, 30), dist=lambda a, b: abs(a - b))
+            dtw_val = float(1.0 / (1.0 + (dist / 30.0)))
+        except Exception:
+            dtw_val = 0.0
+
+        # Classification logic
+        if r_p >= 0.75 and (r_s - r_p < 0.12):
+            linear_count += 1
+        elif (r_s - r_p >= 0.15) and r_s >= 0.45:
+            monotonic_count += 1
+        elif mi_val >= 0.50 and r_p < 0.40:
+            nonlinear_count += 1
+        elif dtw_val >= 0.65 and r_p < 0.45:
+            phase_lagged_count += 1
+        elif max(r_p, r_s, mi_val, dtw_val) < 0.30:
+            weak_count += 1
+        else:
+            linear_count += 1
+
+    total_pairs = len(pairs)
+    pct_linear = round((linear_count / total_pairs) * 100, 1)
+    pct_monotonic = round((monotonic_count / total_pairs) * 100, 1)
+    pct_nonlinear = round((nonlinear_count / total_pairs) * 100, 1)
+    pct_phase_lag = round((phase_lagged_count / total_pairs) * 100, 1)
+    pct_weak = round((weak_count / total_pairs) * 100, 1)
+
+    # Suitability scores (0 - 100)
+    score_pearson = round(min(100.0, pct_linear * 1.0 + pct_monotonic * 0.4 + pct_weak * 0.3), 1)
+    score_spearman = round(min(100.0, pct_monotonic * 1.2 + pct_linear * 0.8 + pct_nonlinear * 0.4), 1)
+    score_kendall = round(min(100.0, pct_monotonic * 1.0 + pct_linear * 0.7 + pct_weak * 0.4), 1)
+    score_dtw = round(min(100.0, pct_phase_lag * 1.5 + pct_linear * 0.5 + pct_monotonic * 0.4), 1)
+    score_mi = round(min(100.0, pct_nonlinear * 1.6 + pct_monotonic * 0.7 + pct_linear * 0.6), 1)
+
+    # Select champion
+    target_mention = f" against target '{target_col}'" if target_col else ""
+    if pct_nonlinear >= 25 or (score_mi > max(score_pearson, score_spearman, score_dtw)):
+        champion = "Mutual Information"
+        explanation = (
+            f"Mutual Information is recommended as the champion algorithm across all {total_pairs} sensor relationships analyzed{target_mention}. "
+            f"{pct_nonlinear}% of channel pairs exhibit complex non-linear or multi-state behavior where linear metrics underestimate coupling."
+        )
+    elif pct_phase_lag >= 25 or (score_dtw > max(score_pearson, score_spearman, score_mi)):
+        champion = "FastDTW (Dynamic Time Warping)"
+        explanation = (
+            f"FastDTW is recommended as the champion algorithm across all {total_pairs} sensor relationships analyzed{target_mention}. "
+            f"{pct_phase_lag}% of channel pairs exhibit dynamic phase lags or time shifts that distort standard point-by-point correlations."
+        )
+    elif pct_monotonic >= 25 or (score_spearman > max(score_pearson, score_mi, score_dtw)):
+        champion = "Spearman Rank Correlation"
+        explanation = (
+            f"Spearman Rank is recommended as the champion algorithm across all {total_pairs} sensor relationships analyzed{target_mention}. "
+            f"{pct_monotonic}% of channel pairs follow curved monotonic trajectories where rank-based coupling outperforms linear Pearson."
+        )
+    else:
+        champion = "Pearson Correlation"
+        explanation = (
+            f"Pearson Correlation is recommended as the champion algorithm across all {total_pairs} sensor relationships analyzed{target_mention}. "
+            f"{pct_linear}% of channel pairs demonstrate strong proportional linear coupling with minimal phase distortion."
+        )
+
+    return {
+        "recommended_algorithm": champion,
+        "explanation": explanation,
+        "suitability_scores": {
+            "pearson": score_pearson,
+            "spearman": score_spearman,
+            "kendall": score_kendall,
+            "fastdtw": score_dtw,
+            "mutual_info": score_mi
+        },
+        "breakdown": {
+            "linear_pct": pct_linear,
+            "monotonic_pct": pct_monotonic,
+            "complex_nonlinear_pct": pct_nonlinear,
+            "phase_lagged_pct": pct_phase_lag,
+            "weak_pct": pct_weak
+        },
+        "total_sensors_analyzed": total_pairs,
+        "target_col": target_col
+    }
+
+
 # =====================================================================
 # 2. MACHINE LEARNING MODEL PREDICTION STUDIO (RF, XGBOOST, LIGHTGBM)
 # =====================================================================
