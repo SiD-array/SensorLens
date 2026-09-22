@@ -5,7 +5,9 @@ import {
   HelpCircle, RefreshCw, Award, Sparkles,
   ChevronDown, Filter, X, Star, Layers,
   Combine, ArrowUpDown, Check, Target,
-  BarChart3, Grid3X3
+  BarChart3, Grid3X3, Wrench, Activity,
+  TrendingUp, Gauge, Clock, Sliders,
+  EyeOff
 } from 'lucide-react';
 import type { TestFile } from '../../types/baseline';
 
@@ -94,6 +96,25 @@ interface FeatureImportance {
   lgb: number;
 }
 
+export interface RULResult {
+  success: boolean;
+  target_col: string;
+  threshold: number;
+  direction: 'increasing' | 'decreasing';
+  current_val: number;
+  initial_val: number;
+  health_index_pct: number;
+  operating_state: 'HEALTHY' | 'WARNING' | 'CRITICAL';
+  rul_samples: number | null;
+  rul_str: string;
+  degradation_rate_100: number;
+  model_used: string;
+  historical: { step: number; value: number; fitted?: number | null }[];
+  forecast: { step: number; projected: number; upper: number; lower: number }[];
+  total_runs?: number;
+  total_samples?: number;
+}
+
 interface MLTrainingResult {
   success: boolean;
   target_col: string;
@@ -113,17 +134,23 @@ interface MLTrainingResult {
     random_forest: number[];
     xgboost: number[];
     lightgbm: number[];
+    svr?: number[];
+    elastic_net?: number[];
+    mlp?: number[];
     test_split_x: number;
   };
   residuals: {
     random_forest: number[];
     xgboost: number[];
     lightgbm: number[];
+    svr?: number[];
+    elastic_net?: number[];
+    mlp?: number[];
   };
 }
 
 export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileId, onFilesUpdate }) => {
-  const [activeTab, setActiveTab] = useState<'correlation' | 'ml'>('correlation');
+  const [activeTab, setActiveTab] = useState<'correlation' | 'ml' | 'rul'>('correlation');
 
   // Multi-run active dataset selection
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>(() => {
@@ -247,25 +274,217 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
     return map;
   }, [corrData, selectedCorrAlgo]);
 
-  // Active target predictive drivers list, sorted according to active algorithm
+  // Tooltip DOM cleanup to guarantee no lingering tooltips on mode or tab switches
+  useEffect(() => {
+    document.querySelectorAll('.echarts-tooltip, div[class*="echarts-tooltip"]').forEach(el => el.remove());
+  }, [stageViewMode, activeTab]);
+
+  // -------------------------------------------------------------
+  // SENSOR EXCLUSION & RULE-OUT STATE
+  // -------------------------------------------------------------
+  const [excludedSensors, setExcludedSensors] = useState<string[]>([]);
+  const [autoExcludePCA, setAutoExcludePCA] = useState(true);
+
+  const handleRuleOutSensor = (col: string) => {
+    setExcludedSensors(prev => Array.from(new Set([...prev, col])));
+    setSelectedCorrChannels(prev => prev.filter(c => c !== col));
+  };
+
+  const handleRestoreSensor = (col: string) => {
+    setExcludedSensors(prev => prev.filter(c => c !== col));
+  };
+
+  const handleClearAllExclusions = () => {
+    setExcludedSensors([]);
+  };
+
+  // Filtered numeric channels respecting user exclusions
+  const availableNumericColumns = useMemo(() => {
+    return numericColumns.filter(c => !excludedSensors.includes(c));
+  }, [numericColumns, excludedSensors]);
+
+  // -------------------------------------------------------------
+  // FEATURE CONSTRUCTION & EXTRACTION STUDIO STATE
+  // -------------------------------------------------------------
+  const [isFeatureStudioOpen, setIsFeatureStudioOpen] = useState(false);
+  const [featCategory, setFeatCategory] = useState<'rolling' | 'derivatives' | 'arithmetic' | 'transforms'>('rolling');
+  const [featOperation, setFeatOperation] = useState<string>('rolling_rms');
+  const [featSource1, setFeatSource1] = useState<string>('');
+  const [featSource2, setFeatSource2] = useState<string>('');
+  const [featWindow, setFeatWindow] = useState<number>(10);
+  const [featCustomName, setFeatCustomName] = useState<string>('');
+  const [isConstructingFeat, setIsConstructingFeat] = useState(false);
+  const [featStudioError, setFeatStudioError] = useState<string | null>(null);
+  const [featStudioSuccess, setFeatStudioSuccess] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (availableNumericColumns.length > 0) {
+      if (!featSource1 || !availableNumericColumns.includes(featSource1)) {
+        setFeatSource1(availableNumericColumns[0]);
+      }
+      if (!featSource2 || !availableNumericColumns.includes(featSource2)) {
+        setFeatSource2(availableNumericColumns.length > 1 ? availableNumericColumns[1] : availableNumericColumns[0]);
+      }
+    }
+  }, [availableNumericColumns]);
+
+  useEffect(() => {
+    if (!featSource1) return;
+    const clean1 = featSource1.replace(/[^a-zA-Z0-9]/g, '_');
+    const clean2 = featSource2 ? featSource2.replace(/[^a-zA-Z0-9]/g, '_') : '';
+    let name = '';
+    if (featOperation === 'rolling_rms') name = `RMS_${clean1}_w${featWindow}`;
+    else if (featOperation === 'rolling_mean') name = `MA_${clean1}_w${featWindow}`;
+    else if (featOperation === 'rolling_std') name = `Std_${clean1}_w${featWindow}`;
+    else if (featOperation === 'rolling_peak_to_peak') name = `P2P_${clean1}_w${featWindow}`;
+    else if (featOperation === 'derivative') name = `d_${clean1}_dt`;
+    else if (featOperation === 'acceleration') name = `d2_${clean1}_dt2`;
+    else if (featOperation === 'rate_of_change') name = `RoC_${clean1}`;
+    else if (featOperation === 'differential') name = `Diff_${clean1}_${clean2 || 'B'}`;
+    else if (featOperation === 'ratio') name = `Ratio_${clean1}_${clean2 || 'B'}`;
+    else if (featOperation === 'product') name = `Prod_${clean1}_${clean2 || 'B'}`;
+    else if (featOperation === 'sum') name = `Sum_${clean1}_${clean2 || 'B'}`;
+    else if (featOperation === 'log') name = `Log_${clean1}`;
+    else if (featOperation === 'square') name = `Sq_${clean1}`;
+    else if (featOperation === 'sqrt') name = `Sqrt_${clean1}`;
+    else if (featOperation === 'zscore') name = `Z_${clean1}`;
+    else if (featOperation === 'cusum') name = `CUSUM_${clean1}`;
+    setFeatCustomName(name);
+  }, [featOperation, featSource1, featSource2, featWindow]);
+
+  const handleConstructFeature = async () => {
+    if (!featSource1 || !featCustomName.trim() || selectedFileIds.length === 0) return;
+    setIsConstructingFeat(true);
+    setFeatStudioError(null);
+    setFeatStudioSuccess(null);
+
+    const sources = [featSource1];
+    if (['differential', 'ratio', 'product', 'sum'].includes(featOperation) && featSource2) {
+      sources.push(featSource2);
+    }
+
+    try {
+      const res = await fetch('http://localhost:8000/api/analytics/construct-feature', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          file_ids: selectedFileIds,
+          operation: featOperation,
+          source_cols: sources,
+          new_sensor_name: featCustomName.trim(),
+          window_size: featWindow
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Feature construction failed');
+      }
+
+      const data = await res.json();
+      const newCol = data.sensor_column;
+      const newColName = data.new_sensor_name;
+
+      const updatedFiles = files.map(f => {
+        if (selectedFileIds.includes(f.id)) {
+          const existingCols = f.columns.map(c => c.name);
+          if (!existingCols.includes(newColName)) {
+            return {
+              ...f,
+              columns: [...f.columns, newCol]
+            };
+          }
+        }
+        return f;
+      });
+
+      if (onFilesUpdate) {
+        onFilesUpdate(updatedFiles);
+      }
+
+      setSelectedCorrChannels(prev => Array.from(new Set([newColName, ...prev])));
+      setFeatStudioSuccess(`Feature "${newColName}" created successfully!`);
+      setTimeout(() => {
+        setIsFeatureStudioOpen(false);
+        setFeatStudioSuccess(null);
+      }, 1500);
+    } catch (err: any) {
+      setFeatStudioError(err.message || 'Error creating feature');
+    } finally {
+      setIsConstructingFeat(false);
+    }
+  };
+
+  // -------------------------------------------------------------
+  // 3. REMAINING USEFUL LIFE (RUL) PROGNOSTICS STATE
+  // -------------------------------------------------------------
+  const [rulTarget, setRulTarget] = useState<string>('');
+  const [rulThreshold, setRulThreshold] = useState<number>(5.0);
+  const [rulDirection, setRulDirection] = useState<'increasing' | 'decreasing'>('increasing');
+  const [rulModelType, setRulModelType] = useState<'exponential' | 'polynomial' | 'linear'>('exponential');
+  const [rulResult, setRulResult] = useState<RULResult | null>(null);
+  const [isLoadingRUL, setIsLoadingRUL] = useState(false);
+  const [rulError, setRulError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (availableNumericColumns.length > 0) {
+      if (!rulTarget || !availableNumericColumns.includes(rulTarget)) {
+        setRulTarget(targetVariable || availableNumericColumns[0]);
+      }
+    }
+  }, [availableNumericColumns, targetVariable]);
+
+  const handleRunRULPrognosis = async () => {
+    if (!rulTarget || selectedFileIds.length === 0) return;
+    setIsLoadingRUL(true);
+    setRulError(null);
+
+    try {
+      const res = await fetch('http://localhost:8000/api/analytics/rul-prognosis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          file_ids: selectedFileIds,
+          target_col: rulTarget,
+          threshold: Number(rulThreshold),
+          direction: rulDirection,
+          model_type: rulModelType
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'RUL Prognosis calculation failed');
+      }
+
+      const data: RULResult = await res.json();
+      setRulResult(data);
+    } catch (e: any) {
+      setRulError(e.message || 'Failed to compute RUL prognosis');
+    } finally {
+      setIsLoadingRUL(false);
+    }
+  };
+
+  // Active target predictive drivers list, sorted according to active algorithm and filtered by exclusions
   const activeDrivers = useMemo(() => {
     if (!corrData) return [];
     const rankings = corrData.all_sensors_rankings?.[selectedCorrAlgo]
       || corrData.feature_rankings?.[selectedCorrAlgo]
       || [];
-    const list = corrData.target_col
+    const list = (corrData.target_col
       ? rankings.filter(r => r.column !== corrData.target_col)
-      : rankings;
+      : rankings).filter(r => !excludedSensors.includes(r.column));
 
     if (sensorScope === 'top20') {
       return list.slice(0, 20);
     }
     return list;
-  }, [corrData, selectedCorrAlgo, sensorScope]);
+  }, [corrData, selectedCorrAlgo, sensorScope, excludedSensors]);
 
-  // Displayed channels sorted by rank or alpha
+  // Displayed channels sorted by rank or alpha, respecting exclusions
   const displayChannels = useMemo(() => {
-    const cols = [...numericColumns];
+    const cols = [...availableNumericColumns];
     if (channelSortMode === 'rank' && Object.keys(activeRankings).length > 0) {
       cols.sort((a, b) => {
         const rankA = activeRankings[a]?.rank ?? 9999;
@@ -276,7 +495,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
       cols.sort((a, b) => a.localeCompare(b));
     }
     return cols;
-  }, [numericColumns, channelSortMode, activeRankings]);
+  }, [availableNumericColumns, channelSortMode, activeRankings]);
 
   // Algorithm-aware Top 20 selection
   const handleSelectTop20 = () => {
@@ -370,6 +589,10 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
       // Automatically include the new composite sensor in the correlation channels
       setSelectedCorrChannels(prev => Array.from(new Set([newColName, ...prev])));
 
+      if (autoExcludePCA) {
+        setExcludedSensors(prev => Array.from(new Set([...prev, ...compositeSources])));
+      }
+
       const successNote = data.method === 'pca' && data.variance_explained_pct
         ? `Generated ${newColName} via PCA (${data.variance_explained_pct}% variance explained)!`
         : `Generated ${newColName} via Normalized Average!`;
@@ -430,6 +653,9 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
         formData.append('file_id', selectedFileIds[0]);
       }
       formData.append('columns_json', JSON.stringify(channelsToUse));
+      if (excludedSensors.length > 0) {
+        formData.append('excluded_columns_json', JSON.stringify(excludedSensors));
+      }
       formData.append('algorithm', 'all');
 
       const effectiveTarget = targetOverride !== undefined ? targetOverride : targetVariable;
@@ -584,13 +810,14 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
     const categories = reversed.map(d => d.column);
     const values = reversed.map(d => d.signed_score !== undefined ? d.signed_score : d.score);
 
-    const minX = selectedCorrAlgo === 'mutual_info' || selectedCorrAlgo === 'fastdtw' ? 0 : -1;
-
     return {
       backgroundColor: 'transparent',
       tooltip: {
         trigger: 'axis',
         axisPointer: { type: 'shadow' },
+        confine: true,
+        appendToBody: false,
+        hideDelay: 50,
         formatter: (params: any) => {
           const d = reversed[params[0].dataIndex];
           const val = params[0].value;
@@ -609,13 +836,22 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
       ] : undefined,
       xAxis: {
         type: 'value',
-        name: `${selectedCorrAlgo.toUpperCase()} Impact Score`,
+        name: `${selectedCorrAlgo.toUpperCase()} Coupling Score`,
         nameLocation: 'middle',
         nameGap: 24,
-        min: minX,
+        min: -1,
         max: 1,
-        axisLabel: { color: '#aaa', fontSize: 11 },
-        splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.08)' } }
+        axisLabel: { 
+          color: '#aaa', 
+          fontSize: 11,
+          formatter: (v: number) => (v > 0 ? `+${v.toFixed(2)}` : v.toFixed(2))
+        },
+        splitLine: { 
+          lineStyle: { 
+            color: (params: any) => params === 0 ? 'rgba(255, 255, 255, 0.4)' : 'rgba(255, 255, 255, 0.08)',
+            width: 1
+          } 
+        }
       },
       yAxis: {
         type: 'category',
@@ -650,7 +886,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
         })),
         label: {
           show: true,
-          position: 'right',
+          position: (params: any) => params.value >= 0 ? 'right' : 'left',
           formatter: (params: any) => {
             const v = params.value;
             return (v > 0 ? '+' : '') + Number(v).toFixed(3);
@@ -681,6 +917,9 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
       backgroundColor: 'transparent',
       tooltip: {
         position: 'top',
+        confine: true,
+        appendToBody: false,
+        hideDelay: 50,
         formatter: (params: any) => {
           const colX = cols[params.data[0]];
           const colY = cols[params.data[1]];
@@ -742,6 +981,8 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
     return {
       backgroundColor: 'transparent',
       tooltip: {
+        confine: true,
+        appendToBody: false,
         formatter: (params: any) => `${pairDiag.col_a}: ${params.value[0].toFixed(2)}<br/>${pairDiag.col_b}: ${params.value[1].toFixed(2)}`
       },
       grid: { left: '8%', right: '6%', bottom: '15%', top: '10%', containLabel: true },
@@ -767,18 +1008,109 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
     };
   };
 
-  const getMLPredictionsChartOption = () => {
-    if (!mlResult) return {};
-    const { indices, actual, random_forest, xgboost, lightgbm, test_split_x } = mlResult.plot_data;
+  const getRulChartOption = () => {
+    if (!rulResult) return {};
+
+    const actualPoints = rulResult.historical.map(h => [h.step, h.value]);
+    const fittedPoints = rulResult.historical.filter(h => h.fitted !== null && h.fitted !== undefined).map(h => [h.step, h.fitted]);
+    
+    const lastHist = actualPoints[actualPoints.length - 1] || [0, 0];
+    const forecastPoints = [[lastHist[0], lastHist[1]], ...rulResult.forecast.map(f => [f.step, f.projected])];
 
     return {
       backgroundColor: 'transparent',
       tooltip: {
         trigger: 'axis',
-        axisPointer: { type: 'cross' }
+        axisPointer: { type: 'cross' },
+        confine: true,
+        appendToBody: false
       },
       legend: {
-        data: ['Actual Sensor Trajectory', 'Random Forest Prediction', 'XGBoost Prediction', 'LightGBM Prediction'],
+        data: ['Historical Sensor Data', 'Fitted Degradation Baseline', 'Prognostic Forecast Horizon'],
+        textStyle: { color: '#ccc', fontSize: 11 },
+        top: 2
+      },
+      grid: { left: '4%', right: '5%', bottom: '12%', top: '12%', containLabel: true },
+      xAxis: {
+        type: 'value',
+        name: 'Time Steps / Operating Cycles',
+        nameLocation: 'middle',
+        nameGap: 26,
+        axisLabel: { color: '#aaa', fontSize: 11 },
+        splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.06)' } }
+      },
+      yAxis: {
+        type: 'value',
+        name: `${rulResult.target_col} Value`,
+        axisLabel: { color: '#aaa', fontSize: 11 },
+        splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.08)' } }
+      },
+      series: [
+        {
+          name: 'Historical Sensor Data',
+          type: 'line',
+          data: actualPoints,
+          smooth: true,
+          showSymbol: false,
+          lineStyle: { color: '#00f2fe', width: 2 },
+          markLine: {
+            symbol: 'none',
+            data: [
+              {
+                yAxis: rulResult.threshold,
+                lineStyle: { color: '#f43f5e', type: 'dashed', width: 2 },
+                label: {
+                  formatter: `CRITICAL THRESHOLD: ${rulResult.threshold}`,
+                  position: 'insideEndTop',
+                  color: '#f43f5e',
+                  fontWeight: 700
+                }
+              }
+            ]
+          }
+        },
+        {
+          name: 'Fitted Degradation Baseline',
+          type: 'line',
+          data: fittedPoints,
+          smooth: true,
+          showSymbol: false,
+          lineStyle: { color: '#818cf8', type: 'dotted', width: 1.5 }
+        },
+        {
+          name: 'Prognostic Forecast Horizon',
+          type: 'line',
+          data: forecastPoints,
+          smooth: true,
+          showSymbol: false,
+          lineStyle: { color: '#fbbf24', type: 'dashed', width: 2.5 }
+        }
+      ]
+    };
+  };
+
+  const getMLPredictionsChartOption = () => {
+    if (!mlResult) return {};
+    const { indices, actual, random_forest, xgboost, lightgbm, svr, elastic_net, mlp, test_split_x } = mlResult.plot_data;
+
+    return {
+      backgroundColor: 'transparent',
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'cross' },
+        confine: true,
+        appendToBody: false
+      },
+      legend: {
+        data: [
+          'Actual Sensor Trajectory',
+          'Random Forest Prediction',
+          'XGBoost Prediction',
+          'LightGBM Prediction',
+          ...(svr ? ['SVR Prediction'] : []),
+          ...(elastic_net ? ['ElasticNet Prediction'] : []),
+          ...(mlp ? ['MLP Neural Net Prediction'] : [])
+        ],
         textStyle: { color: '#ccc', fontSize: 11 },
         top: 2
       },
@@ -871,7 +1203,34 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
           itemStyle: { color: '#34d399' },
           smooth: true,
           symbol: 'none'
-        }
+        },
+        ...(svr ? [{
+          name: 'SVR Prediction',
+          type: 'line',
+          data: svr,
+          lineStyle: { width: 2, color: '#f59e0b', type: 'dashed' },
+          itemStyle: { color: '#f59e0b' },
+          smooth: true,
+          symbol: 'none'
+        }] : []),
+        ...(elastic_net ? [{
+          name: 'ElasticNet Prediction',
+          type: 'line',
+          data: elastic_net,
+          lineStyle: { width: 2, color: '#ec4899', type: 'dashed' },
+          itemStyle: { color: '#ec4899' },
+          smooth: true,
+          symbol: 'none'
+        }] : []),
+        ...(mlp ? [{
+          name: 'MLP Neural Net Prediction',
+          type: 'line',
+          data: mlp,
+          lineStyle: { width: 2, color: '#8b5cf6', type: 'dashed' },
+          itemStyle: { color: '#8b5cf6' },
+          smooth: true,
+          symbol: 'none'
+        }] : [])
       ]
     };
   };
@@ -1082,6 +1441,13 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
               <Cpu size={14} />
               <span>ML Model Studio</span>
             </button>
+            <button
+              onClick={() => setActiveTab('rul')}
+              className={`analytics-tab-btn ${activeTab === 'rul' ? 'active' : ''}`}
+            >
+              <Activity size={14} />
+              <span>RUL Prognostics Studio</span>
+            </button>
           </div>
         </div>
       </header>
@@ -1115,7 +1481,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
                   className="target-channel-select"
                 >
                   <option value="">-- No Target (General Discovery) --</option>
-                  {numericColumns.map(col => (
+                  {availableNumericColumns.map(col => (
                     <option key={col} value={col}>🎯 {col}</option>
                   ))}
                 </select>
@@ -1162,12 +1528,12 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
             <div className="sidebar-divider" />
 
             <div className="sidebar-section-header">
-              <span className="section-title">3. Select Sensors ({selectedCorrChannels.length}/{numericColumns.length} common)</span>
+              <span className="section-title">3. Select Sensors ({selectedCorrChannels.length}/{availableNumericColumns.length} active)</span>
               <div className="sidebar-quick-btns">
                 <button 
                   onClick={handleSelectTop20}
                   className="btn-tiny"
-                  disabled={numericColumns.length === 0}
+                  disabled={availableNumericColumns.length === 0}
                   title={targetVariable ? `Select target and Top 19 drivers of ${targetVariable}` : "Select Top 20 sensors with highest correlation coupling"}
                 >
                   Top 20 {targetVariable ? 'Drivers ★' : (corrData?.all_sensors_rankings?.[selectedCorrAlgo] || corrData?.feature_rankings?.[selectedCorrAlgo] ? '★' : '')}
@@ -1203,32 +1569,85 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
                 </button>
               </div>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setCompositeSources([]);
-                  setCompositeError(null);
-                  setCompositeSuccessMsg(null);
-                  setIsCombineModalOpen(true);
-                }}
-                className="btn-combine-sensors"
-                title="Combine redundant sensors into a single synthetic channel via PCA or Normalized Average"
-                disabled={numericColumns.length < 2}
-              >
-                <Combine size={12} />
-                <span>Combine / PCA</span>
-              </button>
+              <div style={{ display: 'flex', gap: '4px' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsFeatureStudioOpen(true);
+                    setFeatStudioError(null);
+                    setFeatStudioSuccess(null);
+                  }}
+                  className="btn-combine-sensors"
+                  style={{ borderColor: 'rgba(0, 242, 254, 0.35)', color: '#00f2fe' }}
+                  title="Construct engineered features (RMS, derivatives, differentials, ratios, non-linear transforms)"
+                  disabled={availableNumericColumns.length < 1}
+                >
+                  <Wrench size={11} />
+                  <span>Feature Studio</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCompositeSources([]);
+                    setCompositeError(null);
+                    setCompositeSuccessMsg(null);
+                    setIsCombineModalOpen(true);
+                  }}
+                  className="btn-combine-sensors"
+                  title="Combine redundant sensors into a single synthetic channel via PCA or Normalized Average"
+                  disabled={availableNumericColumns.length < 2}
+                >
+                  <Combine size={11} />
+                  <span>PCA / Merge</span>
+                </button>
+              </div>
             </div>
+
+            {/* Excluded Sensors Banner */}
+            {excludedSensors.length > 0 && (
+              <div className="excluded-sensors-bar">
+                <div style={{ flex: 1, overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <EyeOff size={12} />
+                    <span style={{ fontWeight: 600 }}>{excludedSensors.length} Excluded Channels</span>
+                  </div>
+                  <div className="excluded-chips-list">
+                    {excludedSensors.map(sc => (
+                      <span key={sc} className="excluded-chip">
+                        <span>{sc}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleRestoreSensor(sc)}
+                          className="btn-restore-chip"
+                          title={`Restore ${sc} to correlation analysis`}
+                        >
+                          <X size={10} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleClearAllExclusions}
+                  className="btn-restore-chip"
+                  style={{ fontSize: '0.68rem', textDecoration: 'underline', alignSelf: 'flex-start', whiteSpace: 'nowrap' }}
+                >
+                  Restore All
+                </button>
+              </div>
+            )}
 
             {selectedFileIds.length === 0 ? (
               <div className="analytics-error-card" style={{ background: 'rgba(245, 158, 11, 0.12)', borderColor: 'rgba(245, 158, 11, 0.3)', color: '#fbbf24' }}>
                 <AlertTriangle size={14} />
                 <span>No test runs selected. Please select at least 1 test run from the dropdown above.</span>
               </div>
-            ) : numericColumns.length === 0 ? (
+            ) : availableNumericColumns.length === 0 ? (
               <div className="analytics-error-card" style={{ background: 'rgba(239, 68, 68, 0.12)', borderColor: 'rgba(239, 68, 68, 0.3)', color: '#fca5a5' }}>
                 <AlertTriangle size={14} />
-                <span>No common numeric channels found across selected test runs.</span>
+                <span>No available numeric channels found across selected test runs.</span>
               </div>
             ) : (
               <div className="corr-channels-scroll">
@@ -1236,26 +1655,37 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
                   const isChecked = selectedCorrChannels.includes(colName);
                   const rankInfo = activeRankings[colName];
                   return (
-                    <label key={colName} className="corr-channel-item">
-                      <input
-                        type="checkbox"
-                        checked={isChecked}
-                        onChange={() => {
-                          if (isChecked) {
-                            setSelectedCorrChannels(selectedCorrChannels.filter(c => c !== colName));
-                          } else {
-                            setSelectedCorrChannels([...selectedCorrChannels, colName]);
-                          }
-                        }}
-                        className="checkbox-custom"
-                      />
-                      <span className="channel-item-label" title={colName}>{colName}</span>
-                      {rankInfo && (
-                        <span className="sensor-rank-pill" title={`Coupling score: ${rankInfo.score} under ${selectedCorrAlgo.toUpperCase()}`}>
-                          #{rankInfo.rank}
-                        </span>
-                      )}
-                    </label>
+                    <div key={colName} className="channel-item-row channel-selection-item">
+                      <label className="corr-channel-item" style={{ flex: 1, margin: 0 }}>
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => {
+                            if (isChecked) {
+                              setSelectedCorrChannels(selectedCorrChannels.filter(c => c !== colName));
+                            } else {
+                              setSelectedCorrChannels([...selectedCorrChannels, colName]);
+                            }
+                          }}
+                          className="checkbox-custom"
+                        />
+                        <span className="channel-item-label" title={colName}>{colName}</span>
+                        {rankInfo && (
+                          <span className="sensor-rank-pill" title={`Coupling score: ${rankInfo.score} under ${selectedCorrAlgo.toUpperCase()}`}>
+                            #{rankInfo.rank}
+                          </span>
+                        )}
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => handleRuleOutSensor(colName)}
+                        className="btn-rule-out-sensor"
+                        title={`Rule out '${colName}' from correlation analysis`}
+                      >
+                        <EyeOff size={11} />
+                        <span>Rule Out</span>
+                      </button>
+                    </div>
                   );
                 })}
               </div>
@@ -1872,6 +2302,202 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
         </div>
       )}
 
+      {/* ========================================================================= */}
+      {/* TAB 3: REMAINING USEFUL LIFE (RUL) PROGNOSTICS STUDIO                     */}
+      {/* ========================================================================= */}
+      {activeTab === 'rul' && (
+        <div className="rul-studio-container">
+          {/* Top Grid: Controls + KPI Cards */}
+          <div className="rul-top-grid">
+            {/* Controls Card */}
+            <div className="rul-controls-card">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '10px' }}>
+                <Clock size={16} className="text-accent-cyan" />
+                <span style={{ fontSize: '0.88rem', fontWeight: 700, color: '#f8fafc' }}>Prognostic Parameters</span>
+              </div>
+
+              <div className="composite-field-group">
+                <label className="field-label">1. Health / Degradation Indicator</label>
+                <select
+                  value={rulTarget}
+                  onChange={(e) => setRulTarget(e.target.value)}
+                  className="field-select"
+                >
+                  <option value="">Select Sensor Indicator...</option>
+                  {numericColumns.map(col => (
+                    <option key={col} value={col}>{col}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="composite-field-group">
+                <label className="field-label">2. Degradation Trajectory</label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setRulDirection('increasing')}
+                    className={`btn-toggle ${rulDirection === 'increasing' ? 'active' : ''}`}
+                    style={{ fontSize: '0.78rem', padding: '6px' }}
+                  >
+                    <TrendingUp size={12} /> Increasing (Wear/Temp)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRulDirection('decreasing')}
+                    className={`btn-toggle ${rulDirection === 'decreasing' ? 'active' : ''}`}
+                    style={{ fontSize: '0.78rem', padding: '6px' }}
+                  >
+                    <Activity size={12} /> Decreasing (Efficiency)
+                  </button>
+                </div>
+              </div>
+
+              <div className="composite-field-group">
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <label className="field-label">3. Critical Failure Threshold</label>
+                </div>
+                <input
+                  type="number"
+                  step="any"
+                  value={rulThreshold}
+                  onChange={(e) => setRulThreshold(parseFloat(e.target.value) || 0)}
+                  className="field-input"
+                  placeholder="e.g. 100.0"
+                />
+              </div>
+
+              <div className="composite-field-group">
+                <label className="field-label">4. Curve Fitting Model</label>
+                <select
+                  value={rulModelType}
+                  onChange={(e) => setRulModelType(e.target.value as any)}
+                  className="field-select"
+                >
+                  <option value="exponential">Exponential Degradation (Scipy curve_fit)</option>
+                  <option value="polynomial">Polynomial Quadratic Extrapolation</option>
+                  <option value="linear">Linear Trend Projection</option>
+                </select>
+              </div>
+
+              {rulError && (
+                <div className="analytics-error-card">
+                  <AlertTriangle size={14} className="text-red-400" />
+                  <span>{rulError}</span>
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={handleRunRULPrognosis}
+                disabled={isLoadingRUL || !rulTarget}
+                className="btn btn-primary"
+                style={{ width: '100%', marginTop: '6px' }}
+              >
+                {isLoadingRUL ? <RefreshCw className="animate-spin" size={14} /> : <Play size={14} />}
+                <span>Estimate Remaining Useful Life</span>
+              </button>
+            </div>
+
+            {/* KPI Cards Wrapper */}
+            <div className="rul-kpis-wrapper">
+              <div className="rul-kpi-card">
+                <div className="rul-kpi-label">
+                  <Clock size={14} /> Remaining Useful Life
+                </div>
+                <div className="rul-kpi-value" style={{ color: rulResult ? (rulResult.operating_state === 'CRITICAL' ? '#f43f5e' : rulResult.operating_state === 'WARNING' ? '#fbbf24' : '#34d399') : '#94a3b8' }}>
+                  {rulResult ? (rulResult.rul_samples !== null ? `${Math.round(rulResult.rul_samples)}` : rulResult.rul_str) : '--'}
+                  <span style={{ fontSize: '0.85rem', fontWeight: 500, marginLeft: '6px', color: '#94a3b8' }}>
+                    {rulResult?.rul_samples !== null ? 'cycles / pts' : ''}
+                  </span>
+                </div>
+                {rulResult && (
+                  <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                    {rulResult.rul_samples !== null 
+                      ? `Expected failure at cycle ${Math.round(rulResult.historical.length + rulResult.rul_samples)}`
+                      : rulResult.rul_str}
+                  </div>
+                )}
+              </div>
+
+              <div className="rul-kpi-card">
+                <div className="rul-kpi-label">
+                  <Gauge size={14} /> Current Health Index
+                </div>
+                <div className="rul-kpi-value" style={{ color: rulResult ? (rulResult.health_index_pct > 60 ? '#34d399' : rulResult.health_index_pct > 30 ? '#fbbf24' : '#f43f5e') : '#94a3b8' }}>
+                  {rulResult ? `${rulResult.health_index_pct.toFixed(1)}%` : '--'}
+                </div>
+                {rulResult && (
+                  <span className={`rul-kpi-status-badge ${rulResult.operating_state === 'HEALTHY' ? 'rul-status-healthy' : rulResult.operating_state === 'WARNING' ? 'rul-status-warning' : 'rul-status-critical'}`}>
+                    {rulResult.operating_state === 'HEALTHY' ? 'NORMAL OPERATION' : rulResult.operating_state === 'WARNING' ? 'DEGRADATION WARNING' : 'CRITICAL FAULT IMMINENT'}
+                  </span>
+                )}
+              </div>
+
+              <div className="rul-kpi-card">
+                <div className="rul-kpi-label">
+                  <Activity size={14} /> Current Sensor Value
+                </div>
+                <div className="rul-kpi-value">
+                  {rulResult ? rulResult.current_val.toFixed(2) : '--'}
+                </div>
+                {rulResult && (
+                  <div style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
+                    Threshold: {rulResult.threshold.toFixed(2)} ({rulResult.direction})
+                  </div>
+                )}
+              </div>
+
+              <div className="rul-kpi-card">
+                <div className="rul-kpi-label">
+                  <Sliders size={14} /> Fitted Degradation Model
+                </div>
+                <div className="rul-kpi-value" style={{ fontSize: '1.05rem', color: '#00f2fe' }}>
+                  {rulResult ? rulResult.model_used.toUpperCase() : '--'}
+                </div>
+                {rulResult && (
+                  <div style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
+                    Rate: {rulResult.degradation_rate_100.toFixed(2)} / 100 cycles
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Chart Card */}
+          <div className="rul-chart-card">
+            <div className="rul-chart-header">
+              <div className="rul-chart-title">
+                <Activity size={16} className="text-accent-cyan" />
+                <span>Sensor Degradation Trajectory & Forward Prognostic Horizon</span>
+              </div>
+              {rulResult && (
+                <div style={{ display: 'flex', gap: '12px', fontSize: '0.75rem', color: '#94a3b8' }}>
+                  <span><b style={{ color: '#00f2fe' }}>Cyan</b>: Observed Signal</span>
+                  <span><b style={{ color: '#fbbf24' }}>Gold</b>: Degradation Fit</span>
+                  <span><b style={{ color: '#f43f5e' }}>Magenta Dashed</b>: Prognosis Forecast</span>
+                  <span><b style={{ color: '#f43f5e' }}>Red Dotted</b>: Failure Threshold</span>
+                </div>
+              )}
+            </div>
+            <div style={{ flex: 1, minHeight: '380px', width: '100%' }}>
+              {rulResult ? (
+                <ReactECharts
+                  option={getRulChartOption()}
+                  style={{ height: '100%', minHeight: '380px', width: '100%' }}
+                  theme="dark"
+                />
+              ) : (
+                <div className="analytics-empty-state" style={{ height: '100%', minHeight: '380px' }}>
+                  <Clock size={48} className="text-accent-cyan" style={{ opacity: 0.6 }} />
+                  <h3>No Prognostic Run Executed</h3>
+                  <p>Choose a target sensor representing system wear or degradation, specify your operational failure limit, and click <b>Estimate Remaining Useful Life</b>.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MODAL: COMBINE SENSORS / MANUAL PCA */}
       {isCombineModalOpen && (
         <div className="composite-modal-backdrop" onClick={() => setIsCombineModalOpen(false)}>
@@ -1970,6 +2596,19 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
                 />
               </div>
 
+              {/* Auto-Exclude Merged Channels Option */}
+              <div className="composite-field-group" style={{ marginTop: '4px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.8rem', color: '#cbd5e1' }}>
+                  <input
+                    type="checkbox"
+                    checked={autoExcludePCA}
+                    onChange={(e) => setAutoExcludePCA(e.target.checked)}
+                    className="checkbox-custom"
+                  />
+                  <span>Auto-exclude merged source sensors from correlation & predictive driver analysis</span>
+                </label>
+              </div>
+
               {compositeError && (
                 <div className="analytics-error-card">
                   <AlertTriangle size={14} className="text-red-400" />
@@ -2001,6 +2640,203 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
               >
                 {isGeneratingComposite ? <RefreshCw className="animate-spin" size={14} /> : <Combine size={14} />}
                 <span>Generate Composite Sensor</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: FEATURE EXTRACTION & CONSTRUCTION STUDIO */}
+      {isFeatureStudioOpen && (
+        <div className="feature-studio-overlay" onClick={() => setIsFeatureStudioOpen(false)}>
+          <div className="feature-studio-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="composite-modal-header">
+              <div className="modal-title-row">
+                <Wrench size={18} className="text-accent-cyan" />
+                <h3>Feature Extraction & Construction Studio</h3>
+              </div>
+              <button onClick={() => setIsFeatureStudioOpen(false)} className="btn-icon-ghost">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="feature-studio-body">
+              {/* Category tabs */}
+              <div className="feature-category-nav">
+                {[
+                  { id: 'rolling', label: 'Rolling & Filtering' },
+                  { id: 'derivatives', label: 'Derivatives & Dynamics' },
+                  { id: 'arithmetic', label: 'Multi-Sensor Coupling' },
+                  { id: 'transforms', label: 'Non-Linear & Statistical' },
+                ].map(cat => (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => setFeatCategory(cat.id as any)}
+                    className={`category-nav-btn ${featCategory === cat.id ? 'active' : ''}`}
+                  >
+                    {cat.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Operations selection grid */}
+              <div className="op-cards-grid">
+                {featCategory === 'rolling' && [
+                  { id: 'rolling_rms', name: 'Rolling RMS', desc: 'Root Mean Square: captures dynamic vibrational energy & severity.' },
+                  { id: 'rolling_mean', name: 'Rolling Mean', desc: 'Moving average: attenuates high-frequency noise & extracts trends.' },
+                  { id: 'rolling_std', name: 'Rolling Std Dev', desc: 'Local dispersion & turbulence variance indicator.' },
+                  { id: 'rolling_peak_to_peak', name: 'Peak-to-Peak Range', desc: 'Local span (max - min) capturing cycle oscillation amplitudes.' },
+                ].map(op => (
+                  <div
+                    key={op.id}
+                    className={`op-card ${featOperation === op.id ? 'selected' : ''}`}
+                    onClick={() => setFeatOperation(op.id)}
+                  >
+                    <span className="op-card-name">{op.name}</span>
+                    <span className="op-card-desc">{op.desc}</span>
+                  </div>
+                ))}
+
+                {featCategory === 'derivatives' && [
+                  { id: 'derivative', name: '1st Derivative (dx/dt)', desc: 'Velocity / Instantaneous rate of change of process parameter.' },
+                  { id: 'acceleration', name: '2nd Derivative (d²x/dt²)', desc: 'Acceleration & shock jerk: detects mechanical instability.' },
+                  { id: 'rate_of_change', name: '% Rate of Change', desc: 'Percentage delta between successive steps.' },
+                ].map(op => (
+                  <div
+                    key={op.id}
+                    className={`op-card ${featOperation === op.id ? 'selected' : ''}`}
+                    onClick={() => setFeatOperation(op.id)}
+                  >
+                    <span className="op-card-name">{op.name}</span>
+                    <span className="op-card-desc">{op.desc}</span>
+                  </div>
+                ))}
+
+                {featCategory === 'arithmetic' && [
+                  { id: 'differential', name: 'Differential (S1 - S2)', desc: 'Sensor subtraction: delta pressure, delta T across stages.' },
+                  { id: 'ratio', name: 'Ratio (S1 / S2)', desc: 'Relative coefficient / efficiency balance between two signals.' },
+                  { id: 'product', name: 'Product (S1 × S2)', desc: 'Interaction term / instantaneous power proxy (e.g. V × I).' },
+                  { id: 'sum', name: 'Sum (S1 + S2)', desc: 'Composite summation of two sensor signals.' },
+                ].map(op => (
+                  <div
+                    key={op.id}
+                    className={`op-card ${featOperation === op.id ? 'selected' : ''}`}
+                    onClick={() => setFeatOperation(op.id)}
+                  >
+                    <span className="op-card-name">{op.name}</span>
+                    <span className="op-card-desc">{op.desc}</span>
+                  </div>
+                ))}
+
+                {featCategory === 'transforms' && [
+                  { id: 'log', name: 'Logarithm ln(|S|)', desc: 'Compresses wide dynamic ranges & stabilizes skewed sensors.' },
+                  { id: 'square', name: 'Square (S²)', desc: 'Amplifies peaks & models quadratic drag / kinetic energy.' },
+                  { id: 'sqrt', name: 'Square Root (√|S|)', desc: 'Compresses peak intensity.' },
+                  { id: 'zscore', name: 'Z-Score Normalization', desc: 'Standard score (mean 0, std 1) for drift and outlier detection.' },
+                  { id: 'cusum', name: 'CUSUM Accumulator', desc: 'Cumulative sum of deviations: detects small persistent mean shifts.' },
+                ].map(op => (
+                  <div
+                    key={op.id}
+                    className={`op-card ${featOperation === op.id ? 'selected' : ''}`}
+                    onClick={() => setFeatOperation(op.id)}
+                  >
+                    <span className="op-card-name">{op.name}</span>
+                    <span className="op-card-desc">{op.desc}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Source Channel Selectors */}
+              <div className="composite-field-group">
+                <label className="field-label">Primary Source Sensor (S1)</label>
+                <select
+                  value={featSource1}
+                  onChange={(e) => setFeatSource1(e.target.value)}
+                  className="field-select"
+                >
+                  <option value="">Select Sensor...</option>
+                  {numericColumns.map(col => (
+                    <option key={col} value={col}>{col}</option>
+                  ))}
+                </select>
+              </div>
+
+              {['differential', 'ratio', 'product', 'sum'].includes(featOperation) && (
+                <div className="composite-field-group">
+                  <label className="field-label">Secondary Source Sensor (S2)</label>
+                  <select
+                    value={featSource2}
+                    onChange={(e) => setFeatSource2(e.target.value)}
+                    className="field-select"
+                  >
+                    <option value="">Select Sensor 2...</option>
+                    {numericColumns.filter(c => c !== featSource1).map(col => (
+                      <option key={col} value={col}>{col}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {['rolling_rms', 'rolling_mean', 'rolling_std', 'rolling_peak_to_peak'].includes(featOperation) && (
+                <div className="composite-field-group">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <label className="field-label">Rolling Window Size</label>
+                    <span style={{ fontSize: '0.76rem', color: '#00f2fe', fontFamily: 'monospace' }}>{featWindow} samples</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={3}
+                    max={100}
+                    value={featWindow}
+                    onChange={(e) => setFeatWindow(parseInt(e.target.value))}
+                    style={{ width: '100%', accentColor: '#00f2fe' }}
+                  />
+                </div>
+              )}
+
+              <div className="composite-field-group">
+                <label className="field-label">Constructed Feature Name</label>
+                <input
+                  type="text"
+                  value={featCustomName}
+                  onChange={(e) => setFeatCustomName(e.target.value)}
+                  placeholder="e.g. Vibration_RMS_w15"
+                  className="field-input"
+                />
+              </div>
+
+              {featStudioError && (
+                <div className="analytics-error-card">
+                  <AlertTriangle size={14} className="text-red-400" />
+                  <span>{featStudioError}</span>
+                </div>
+              )}
+
+              {featStudioSuccess && (
+                <div className="composite-success-card">
+                  <Check size={16} className="text-emerald-400" />
+                  <span>{featStudioSuccess}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="composite-modal-footer">
+              <button
+                type="button"
+                onClick={() => setIsFeatureStudioOpen(false)}
+                className="btn btn-ghost"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={handleConstructFeature}
+                disabled={isConstructingFeat || !featSource1 || (!featSource2 && ['differential', 'ratio', 'product', 'sum'].includes(featOperation))}
+                className="btn btn-primary"
+              >
+                {isConstructingFeat ? <RefreshCw className="animate-spin" size={14} /> : <Sparkles size={14} />}
+                <span>Construct & Ingest Feature</span>
               </button>
             </div>
           </div>

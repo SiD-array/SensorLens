@@ -77,7 +77,7 @@ def test_train_and_compare_models(sample_sensor_df):
 
     assert result['success'] is True
     assert 'champion' in result
-    assert len(result['leaderboard']) == 3
+    assert len(result['leaderboard']) == 6  # RF, XGB, LGB, SVR, ElasticNet, MLP
     assert len(result['feature_importance_ranking']) == 3
     assert len(result['plot_data']['actual']) == 100
 
@@ -141,7 +141,7 @@ def test_api_analytics_endpoints(sample_sensor_df):
     assert ml_res.status_code == 200
     ml_data = ml_res.json()
     assert ml_data["success"] is True
-    assert len(ml_data["leaderboard"]) == 3
+    assert len(ml_data["leaderboard"]) == 6
     assert "champion" in ml_data
 
 
@@ -222,7 +222,7 @@ def test_multi_run_pooling_endpoints(sample_sensor_df):
     assert m_data["success"] is True
     assert m_data["total_runs"] == 2
     assert m_data["total_samples"] == 200
-    assert len(m_data["leaderboard"]) == 3
+    assert len(m_data["leaderboard"]) == 6
 
 
 def test_feature_ranking_and_composite_sensor(sample_sensor_df):
@@ -343,6 +343,105 @@ def test_feature_ranking_and_composite_sensor(sample_sensor_df):
     assert "breakdown" in gdiag
     assert gdiag["total_sensors_analyzed"] >= 2
     assert "linear_pct" in gdiag["breakdown"]
+
+
+def test_feature_construction_and_rul(sample_sensor_df):
+    from app.services.analytics import construct_engineered_feature, calculate_rul_prognosis, calculate_target_correlations_all_sensors
+    from io import BytesIO
+
+    # 1. Feature Construction: Rolling RMS
+    df_copy = sample_sensor_df.copy()
+    fc_res = construct_engineered_feature(
+        target_dfs=[df_copy],
+        operation="rolling_rms",
+        source_cols=["sensor_1"],
+        new_sensor_name="RMS_Sensor1",
+        window_size=10
+    )
+    assert fc_res["success"] is True
+    assert "RMS_Sensor1" in df_copy.columns
+    assert len(df_copy["RMS_Sensor1"]) == 100
+    assert fc_res["sensor_column"]["mean"] > 0
+
+    # 2. Feature Construction: Differential
+    diff_res = construct_engineered_feature(
+        target_dfs=[df_copy],
+        operation="differential",
+        source_cols=["sensor_1", "sensor_2"],
+        new_sensor_name="Diff_1_2"
+    )
+    assert diff_res["success"] is True
+    assert "Diff_1_2" in df_copy.columns
+
+    # 3. RUL Prognosis on degradation curve
+    # Create degradation trend towards critical vibration threshold = 5.0
+    degradation_data = pd.DataFrame({
+        "vibration": [0.5 + 0.03 * (i ** 1.3) + np.random.normal(0, 0.05) for i in range(80)]
+    })
+    rul_res = calculate_rul_prognosis(
+        df=degradation_data,
+        target_col="vibration",
+        threshold=25.0,
+        direction="increasing",
+        model_type="exponential"
+    )
+    assert rul_res["success"] is True
+    assert rul_res["health_index_pct"] <= 100.0
+    assert rul_res["health_index_pct"] >= 0.0
+    assert rul_res["rul_samples"] is not None
+    assert len(rul_res["forecast"]) > 0
+    assert len(rul_res["historical"]) > 0
+
+    # 4. Inversely correlated series has negative signed_score for FastDTW and Mutual Info
+    inv_df = pd.DataFrame({
+        "target": np.linspace(0, 10, 50),
+        "inverse_sensor": -np.linspace(0, 10, 50) + np.random.normal(0, 0.02, 50)
+    })
+    target_rankings = calculate_target_correlations_all_sensors(inv_df, "target", ["target", "inverse_sensor"])
+    assert "fastdtw" in target_rankings
+    assert "mutual_info" in target_rankings
+    fastdtw_inv = target_rankings["fastdtw"][0]
+    mi_inv = target_rankings["mutual_info"][0]
+    assert fastdtw_inv["signed_score"] < 0
+    assert mi_inv["signed_score"] < 0
+
+    # 5. Test API Endpoints
+    buffer = BytesIO()
+    sample_sensor_df.to_excel(buffer, index=False)
+    buffer.seek(0)
+    up_res = client.post(
+        "/api/upload",
+        files={"file": ("test_features_rul.xlsx", buffer, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+    )
+    fid = up_res.json()["id"]
+
+    # Endpoint POST /api/analytics/construct-feature
+    api_fc = client.post(
+        "/api/analytics/construct-feature",
+        json={
+            "file_ids": [fid],
+            "operation": "derivative",
+            "source_cols": ["sensor_1"],
+            "new_sensor_name": "d_sensor1_dt"
+        }
+    )
+    assert api_fc.status_code == 200
+    assert api_fc.json()["new_sensor_name"] == "d_sensor1_dt"
+
+    # Endpoint POST /api/analytics/rul-prognosis
+    api_rul = client.post(
+        "/api/analytics/rul-prognosis",
+        json={
+            "file_ids": [fid],
+            "target_col": "sensor_1",
+            "threshold": 3.0,
+            "direction": "increasing",
+            "model_type": "linear"
+        }
+    )
+    assert api_rul.status_code == 200
+    assert "rul_samples" in api_rul.json()
+
 
 
 

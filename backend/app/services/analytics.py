@@ -12,6 +12,10 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.feature_selection import mutual_info_regression
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVR
+from sklearn.linear_model import ElasticNet
+from sklearn.neural_network import MLPRegressor
+import scipy.optimize
 import xgboost as xgb
 import lightgbm as lgb
 
@@ -177,6 +181,118 @@ def generate_composite_sensor(
         "variance_explained_pct": variance_explained,
         "sensor_column": sensor_column_meta,
         "source_columns": clean_sources
+    }
+
+
+def construct_engineered_feature(
+    target_dfs: List[pd.DataFrame],
+    operation: str,
+    source_cols: List[str],
+    new_sensor_name: str,
+    window_size: int = 10,
+    constant_val: float = 1.0
+) -> Dict[str, Any]:
+    """
+    Constructs an engineered feature across all target_dfs using standard mathematical
+    and signal processing operations (rolling statistics, derivatives, multi-sensor arithmetic,
+    non-linear transforms).
+    """
+    if not target_dfs or not source_cols:
+        raise ValueError("At least one dataframe and one source column are required.")
+
+    clean_sources = [str(c).strip() for c in source_cols]
+    new_name = str(new_sensor_name).strip()
+    if not new_name:
+        raise ValueError("New feature name cannot be empty.")
+
+    primary_series = None
+    op = operation.lower().strip()
+
+    for df in target_dfs:
+        for c in clean_sources:
+            if c not in df.columns:
+                raise ValueError(f"Source column '{c}' not found in one of the test runs.")
+
+        # Ensure numeric
+        s1 = pd.to_numeric(df[clean_sources[0]], errors="coerce").ffill().bfill().fillna(0.0)
+        s2 = pd.to_numeric(df[clean_sources[1]], errors="coerce").ffill().bfill().fillna(0.0) if len(clean_sources) > 1 else None
+
+        win = max(2, int(window_size))
+
+        if op == "rolling_mean":
+            res = s1.rolling(window=win, min_periods=1).mean()
+        elif op == "rolling_std":
+            res = s1.rolling(window=win, min_periods=1).std().fillna(0.0)
+        elif op == "rolling_rms":
+            res = np.sqrt((s1 ** 2).rolling(window=win, min_periods=1).mean())
+        elif op == "rolling_peak_to_peak":
+            res = s1.rolling(window=win, min_periods=1).max() - s1.rolling(window=win, min_periods=1).min()
+        elif op == "derivative":
+            res = s1.diff().fillna(0.0)
+        elif op == "acceleration":
+            res = s1.diff().diff().fillna(0.0)
+        elif op == "rate_of_change":
+            res = s1.pct_change().replace([np.inf, -np.inf], 0.0).fillna(0.0) * 100.0
+        elif op == "differential":
+            if s2 is None:
+                raise ValueError("Differential operation requires 2 source columns.")
+            res = s1 - s2
+        elif op == "ratio":
+            if s2 is None:
+                raise ValueError("Ratio operation requires 2 source columns.")
+            denom = s2.replace(0.0, np.nan)
+            res = (s1 / denom).fillna(0.0).replace([np.inf, -np.inf], 0.0)
+        elif op == "product":
+            if s2 is None:
+                raise ValueError("Product operation requires 2 source columns.")
+            res = s1 * s2
+        elif op == "sum":
+            if s2 is None:
+                raise ValueError("Sum operation requires 2 source columns.")
+            res = s1 + s2
+        elif op == "log":
+            res = np.sign(s1) * np.log1p(np.abs(s1))
+        elif op == "square":
+            res = s1 ** 2
+        elif op == "sqrt":
+            res = np.sign(s1) * np.sqrt(np.abs(s1))
+        elif op == "zscore":
+            std = float(s1.std())
+            res = (s1 - s1.mean()) / (std if std > 1e-6 else 1.0)
+        elif op == "cusum":
+            res = (s1 - s1.mean()).cumsum()
+        else:
+            raise ValueError(f"Unsupported feature construction operation: '{operation}'")
+
+        df[new_name] = res.fillna(0.0)
+        if primary_series is None:
+            primary_series = df[new_name]
+
+    c_min = float(primary_series.min())
+    c_max = float(primary_series.max())
+    c_mean = float(primary_series.mean())
+    c_std = float(primary_series.std()) if len(primary_series) > 1 else 0.0
+    sparkline_pts = interpolate_series(primary_series.values, 30).tolist()
+
+    sensor_column_meta = {
+        "name": new_name,
+        "type": "numeric",
+        "total_rows": len(primary_series),
+        "missing_count": 0,
+        "min": c_min,
+        "max": c_max,
+        "mean": c_mean,
+        "std": c_std,
+        "sparkline": sparkline_pts
+    }
+
+    return {
+        "success": True,
+        "new_sensor_name": new_name,
+        "operation": op,
+        "sensor_column": sensor_column_meta,
+        "source_columns": clean_sources,
+        "window_size": win if "rolling" in op else None
     }
 
 
@@ -517,11 +633,16 @@ def calculate_target_correlations_all_sensors(
             f_min, f_max = np.min(f_vals), np.max(f_vals)
             f_norm = (f_vals - f_min) / max(f_max - f_min, 1e-6)
             f_interp = interpolate_series(f_norm, target_length=40)
-            dist, _ = fastdtw(t_interp, f_interp, dist=lambda a, b: abs(a - b))
-            sim = float(1.0 / (1.0 + (dist / 40.0)))
-            # Inherit sign from Pearson/Spearman for directionality
-            s_val = p_corr.get(c, 0.0)
-            signed_dtw = round(sim if s_val >= 0 else -sim, 4)
+            dist_direct, _ = fastdtw(t_interp, f_interp, dist=lambda a, b: abs(a - b))
+            dist_inverse, _ = fastdtw(t_interp, 1.0 - f_interp, dist=lambda a, b: abs(a - b))
+            p_val = float(p_corr.get(c, 0.0))
+            if dist_inverse < dist_direct or p_val < -0.15:
+                # Waveform is inversely coupled
+                sim = float(1.0 / (1.0 + (dist_inverse / 40.0)))
+                signed_dtw = -round(sim, 4)
+            else:
+                sim = float(1.0 / (1.0 + (dist_direct / 40.0)))
+                signed_dtw = round(sim, 4)
             dtw_scores[c] = (round(sim, 4), signed_dtw)
         except Exception:
             dtw_scores[c] = (0.0, 0.0)
@@ -532,8 +653,10 @@ def calculate_target_correlations_all_sensors(
         mi_vals = mutual_info_regression(features_df.values, target_series.values, random_state=42)
         for idx, c in enumerate(candidate_cols):
             val = float(np.tanh(mi_vals[idx]))
-            s_val = s_corr.get(c, 0.0)
-            signed_mi = round(val if s_val >= 0 else -val, 4)
+            s_val = float(s_corr.get(c, 0.0))
+            p_val = float(p_corr.get(c, 0.0))
+            is_inverse = (s_val < -0.05) or (s_val <= 0.05 and p_val < -0.05)
+            signed_mi = -round(val, 4) if is_inverse else round(val, 4)
             mi_scores[c] = (round(val, 4), signed_mi)
     except Exception:
         for c in candidate_cols:
@@ -895,10 +1018,78 @@ def train_and_compare_models(
         "model_obj": lgb_model
     }
 
+    # --- 4. Support Vector Regressor (SVR) ---
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+    X_scaled = scaler.transform(X)
+
+    t0 = time.time()
+    svr_model = SVR(kernel="rbf", C=10.0, epsilon=0.05)
+    svr_model.fit(X_train_scaled, y_train)
+    svr_time_ms = round((time.time() - t0) * 1000, 1)
+
+    svr_pred_test = svr_model.predict(X_test_scaled)
+    svr_r2 = round(float(r2_score(y_test, svr_pred_test)), 4)
+    svr_rmse = round(float(np.sqrt(mean_squared_error(y_test, svr_pred_test))), 4)
+    svr_mae = round(float(mean_absolute_error(y_test, svr_pred_test)), 4)
+
+    models_data["svr"] = {
+        "model_name": "Support Vector Regression (SVR)",
+        "r2": svr_r2,
+        "rmse": svr_rmse,
+        "mae": svr_mae,
+        "train_time_ms": svr_time_ms,
+        "model_obj": svr_model
+    }
+
+    # --- 5. ElasticNet Regularized Linear Regressor ---
+    t0 = time.time()
+    en_model = ElasticNet(alpha=0.05, l1_ratio=0.5, max_iter=1000, random_state=random_state)
+    en_model.fit(X_train_scaled, y_train)
+    en_time_ms = round((time.time() - t0) * 1000, 1)
+
+    en_pred_test = en_model.predict(X_test_scaled)
+    en_r2 = round(float(r2_score(y_test, en_pred_test)), 4)
+    en_rmse = round(float(np.sqrt(mean_squared_error(y_test, en_pred_test))), 4)
+    en_mae = round(float(mean_absolute_error(y_test, en_pred_test)), 4)
+
+    models_data["elastic_net"] = {
+        "model_name": "ElasticNet Regularized Linear",
+        "r2": en_r2,
+        "rmse": en_rmse,
+        "mae": en_mae,
+        "train_time_ms": en_time_ms,
+        "model_obj": en_model
+    }
+
+    # --- 6. Multi-Layer Perceptron (MLP Neural Net) ---
+    t0 = time.time()
+    mlp_model = MLPRegressor(hidden_layer_sizes=(64, 32), max_iter=300, random_state=random_state, early_stopping=True)
+    mlp_model.fit(X_train_scaled, y_train)
+    mlp_time_ms = round((time.time() - t0) * 1000, 1)
+
+    mlp_pred_test = mlp_model.predict(X_test_scaled)
+    mlp_r2 = round(float(r2_score(y_test, mlp_pred_test)), 4)
+    mlp_rmse = round(float(np.sqrt(mean_squared_error(y_test, mlp_pred_test))), 4)
+    mlp_mae = round(float(mean_absolute_error(y_test, mlp_pred_test)), 4)
+
+    models_data["mlp"] = {
+        "model_name": "MLP Neural Network",
+        "r2": mlp_r2,
+        "rmse": mlp_rmse,
+        "mae": mlp_mae,
+        "train_time_ms": mlp_time_ms,
+        "model_obj": mlp_model
+    }
+
     # Predict full dataset trajectories for visualization (downsampled to max 500 pts)
     rf_full = rf.predict(X)
     xgb_full = xgb_model.predict(X)
     lgb_full = lgb_model.predict(X)
+    svr_full = svr_model.predict(X_scaled)
+    en_full = en_model.predict(X_scaled)
+    mlp_full = mlp_model.predict(X_scaled)
 
     total_pts = len(y)
     step = max(1, total_pts // 500)
@@ -908,6 +1099,9 @@ def train_and_compare_models(
     rf_series = [round(float(rf_full[i]), 3) for i in indices]
     xgb_series = [round(float(xgb_full[i]), 3) for i in indices]
     lgb_series = [round(float(lgb_full[i]), 3) for i in indices]
+    svr_series = [round(float(svr_full[i]), 3) for i in indices]
+    en_series = [round(float(en_full[i]), 3) for i in indices]
+    mlp_series = [round(float(mlp_full[i]), 3) for i in indices]
 
     # Split marker index (where test set begins in downsampled sequence)
     test_start_orig = len(X_train)
@@ -917,12 +1111,15 @@ def train_and_compare_models(
     rf_residuals = (y_test - rf_pred_test).tolist()
     xgb_residuals = (y_test - xgb_pred_test).tolist()
     lgb_residuals = (y_test - lgb_pred_test).tolist()
+    svr_residuals = (y_test - svr_pred_test).tolist()
+    en_residuals = (y_test - en_pred_test).tolist()
+    mlp_residuals = (y_test - mlp_pred_test).tolist()
 
     # Determine champion model (highest R2, lowest RMSE)
-    candidates = ["random_forest", "xgboost", "lightgbm"]
+    candidates = ["random_forest", "xgboost", "lightgbm", "svr", "elastic_net", "mlp"]
     champion_key = max(candidates, key=lambda k: models_data[k]["r2"])
 
-    # Average feature importance across all 3 models
+    # Average feature importance across tree models
     avg_fi = []
     for idx, f in enumerate(feature_cols):
         avg_val = (rf_fi_pct[idx] + xgb_fi_pct[idx] + lgb_fi_pct[idx]) / 3.0
@@ -966,11 +1163,196 @@ def train_and_compare_models(
             "random_forest": rf_series,
             "xgboost": xgb_series,
             "lightgbm": lgb_series,
+            "svr": svr_series,
+            "elastic_net": en_series,
+            "mlp": mlp_series,
             "test_split_x": split_index
         },
         "residuals": {
             "random_forest": rf_residuals[:200],
             "xgboost": xgb_residuals[:200],
-            "lightgbm": lgb_residuals[:200]
+            "lightgbm": lgb_residuals[:200],
+            "svr": svr_residuals[:200],
+            "elastic_net": en_residuals[:200],
+            "mlp": mlp_residuals[:200]
         }
     }
+
+
+def calculate_rul_prognosis(
+    df: pd.DataFrame,
+    target_col: str,
+    threshold: float,
+    direction: str = "increasing",
+    model_type: str = "exponential",
+    forecast_horizon_max: int = 1000
+) -> Dict[str, Any]:
+    """
+    Computes Remaining Useful Life (RUL) and degradation trajectory modeling
+    for a critical sensor or Health Index column reaching a failure threshold.
+    """
+    if target_col not in df.columns:
+        raise ValueError(f"Sensor column '{target_col}' not found in dataset.")
+
+    s = pd.to_numeric(df[target_col], errors="coerce").interpolate().bfill().ffill().dropna().values
+    n = len(s)
+    if n < 10:
+        raise ValueError(f"Insufficient sensor data points ({n}) for RUL prognosis. Minimum 10 points required.")
+
+    t = np.arange(n, dtype=float)
+    current_val = float(s[-1])
+    initial_val = float(s[0])
+    thresh = float(threshold)
+
+    is_increasing = direction.lower().strip() == "increasing"
+
+    # Health Index HI % (100% = pristine, 0% = failed/breached)
+    denom = abs(thresh - initial_val)
+    if denom < 1e-6:
+        denom = 1.0
+    if is_increasing:
+        hi = max(0.0, min(100.0, 100.0 * (1.0 - max(0.0, (current_val - initial_val)) / denom)))
+        has_failed = current_val >= thresh
+    else:
+        hi = max(0.0, min(100.0, 100.0 * (max(0.0, (current_val - thresh)) / denom)))
+        has_failed = current_val <= thresh
+
+    hi = round(float(hi), 1)
+
+    if hi >= 60.0:
+        operating_state = "HEALTHY"
+    elif hi >= 30.0:
+        operating_state = "WARNING"
+    else:
+        operating_state = "CRITICAL"
+
+    # Degradation rate (delta per 100 samples based on recent 20% of data)
+    recent_len = max(5, int(n * 0.2))
+    recent_s = s[-recent_len:]
+    recent_t = t[-recent_len:]
+    poly_recent = np.polyfit(recent_t, recent_s, 1)
+    slope = float(poly_recent[0])
+    degradation_rate_100 = round(slope * 100.0, 4)
+
+    # Model fitting
+    fitted_vals = None
+    rul_samples = None
+    future_t = []
+    future_vals = []
+    conf_upper = []
+    conf_lower = []
+    model_used = model_type.lower()
+
+    if has_failed:
+        rul_samples = 0
+        model_used = "Threshold already breached"
+    else:
+        # Attempt Exponential Fit
+        exp_success = False
+        if "exp" in model_used:
+            try:
+                def exp_func(x, a, b, c):
+                    return a * np.exp(np.clip(b * (x / n), -20, 20)) + c
+                
+                c_init = initial_val
+                a_init = (current_val - initial_val) if abs(current_val - initial_val) > 1e-4 else (1.0 if is_increasing else -1.0)
+                b_init = 1.0 if is_increasing else -1.0
+                popt, _ = scipy.optimize.curve_fit(exp_func, t, s, p0=[a_init, b_init, c_init], maxfev=1500)
+                a_fit, b_fit, c_fit = popt
+                
+                arg = (thresh - c_fit) / (a_fit if abs(a_fit) > 1e-6 else 1e-6)
+                if arg > 0 and abs(b_fit) > 1e-4:
+                    t_fail = (np.log(arg) / b_fit) * n
+                    if t_fail > (n - 1):
+                        rul_samples = int(round(t_fail - (n - 1)))
+                        fitted_vals = exp_func(t, *popt)
+                        exp_success = True
+                        model_used = "Exponential Degradation Model"
+            except Exception:
+                exp_success = False
+
+        # Fallback to Polynomial/Linear
+        if not exp_success:
+            try:
+                p_coeffs = np.polyfit(t, s, 2)
+                fitted_vals = np.polyval(p_coeffs, t)
+                roots = np.roots([p_coeffs[0], p_coeffs[1], p_coeffs[2] - thresh])
+                future_roots = [float(r.real) for r in roots if np.isreal(r) and r.real > (n - 1)]
+                if future_roots:
+                    rul_samples = int(round(min(future_roots) - (n - 1)))
+                    model_used = "Polynomial (2nd Order) Extrapolation"
+            except Exception:
+                pass
+
+        if rul_samples is None:
+            p_linear = np.polyfit(t, s, 1)
+            fitted_vals = np.polyval(p_linear, t)
+            m, b = p_linear[0], p_linear[1]
+            if is_increasing and m > 1e-6:
+                t_fail = (thresh - b) / m
+                if t_fail > (n - 1):
+                    rul_samples = int(round(t_fail - (n - 1)))
+            elif not is_increasing and m < -1e-6:
+                t_fail = (thresh - b) / m
+                if t_fail > (n - 1):
+                    rul_samples = int(round(t_fail - (n - 1)))
+            model_used = "Linear Trend Extrapolation"
+
+        if rul_samples is None or rul_samples <= 0:
+            rul_samples = forecast_horizon_max
+        else:
+            rul_samples = min(rul_samples, forecast_horizon_max)
+
+        proj_steps = min(rul_samples + 30, forecast_horizon_max)
+        future_indices = np.arange(n, n + proj_steps, dtype=float)
+        
+        residuals = s - fitted_vals
+        sigma_res = float(np.std(residuals)) if len(residuals) > 1 else 1.0
+
+        if "exp" in model_used.lower() and exp_success:
+            fut_y = exp_func(future_indices, *popt)
+        else:
+            fut_y = np.polyval(np.polyfit(t, s, 2 if len(t) > 20 else 1), future_indices)
+
+        for idx, (ft, fy) in enumerate(zip(future_indices, fut_y)):
+            future_t.append(int(ft))
+            v = float(fy)
+            future_vals.append(round(v, 3))
+            unc = sigma_res * np.sqrt(1.0 + (idx / max(1, proj_steps)))
+            conf_upper.append(round(v + 1.96 * unc, 3))
+            conf_lower.append(round(v - 1.96 * unc, 3))
+
+    step = max(1, n // 300)
+    sample_indices = list(range(0, n, step))
+    if sample_indices[-1] != n - 1:
+        sample_indices.append(n - 1)
+
+    hist_data = [{"step": int(t[i]), "value": round(float(s[i]), 3), "fitted": round(float(fitted_vals[i]), 3) if fitted_vals is not None else None} for i in sample_indices]
+
+    future_data = []
+    f_step = max(1, len(future_t) // 100) if len(future_t) > 0 else 1
+    for i in range(0, len(future_t), f_step):
+        future_data.append({
+            "step": future_t[i],
+            "projected": future_vals[i],
+            "upper": conf_upper[i],
+            "lower": conf_lower[i]
+        })
+
+    return {
+        "success": True,
+        "target_col": target_col,
+        "threshold": thresh,
+        "direction": direction,
+        "current_val": round(current_val, 3),
+        "initial_val": round(initial_val, 3),
+        "health_index_pct": hi,
+        "operating_state": operating_state,
+        "rul_samples": rul_samples,
+        "rul_str": f"{rul_samples:,} cycles remaining" if rul_samples is not None and rul_samples > 0 else "Threshold Breached",
+        "degradation_rate_100": degradation_rate_100,
+        "model_used": model_used,
+        "historical": hist_data,
+        "forecast": future_data
+    }
+

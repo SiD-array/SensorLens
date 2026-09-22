@@ -17,7 +17,9 @@ from app.services.analytics import (
     rank_features_from_matrix,
     generate_composite_sensor,
     calculate_target_correlations_all_sensors,
-    diagnose_dataset_algorithms
+    diagnose_dataset_algorithms,
+    construct_engineered_feature,
+    calculate_rul_prognosis
 )
 
 router = APIRouter()
@@ -36,6 +38,26 @@ class CompositeSensorRequest(BaseModel):
     source_cols: List[str]
     method: Optional[str] = "pca"
     new_sensor_name: Optional[str] = None
+
+
+class FeatureConstructionRequest(BaseModel):
+    file_ids: Optional[List[str]] = None
+    file_id: Optional[str] = None
+    operation: str
+    source_cols: List[str]
+    new_sensor_name: str
+    window_size: Optional[int] = 10
+    constant_val: Optional[float] = 1.0
+
+
+class RulPrognosisRequest(BaseModel):
+    file_ids: Optional[List[str]] = None
+    file_id: Optional[str] = None
+    target_col: str
+    threshold: float
+    direction: Optional[str] = "increasing"
+    model_type: Optional[str] = "exponential"
+    forecast_horizon_max: Optional[int] = 1000
 
 
 def _resolve_dataframes(
@@ -78,6 +100,7 @@ async def calculate_correlations_endpoint(
     file_ids_json: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None),
     columns_json: Optional[str] = Form(None),
+    excluded_columns_json: Optional[str] = Form(None),
     algorithm: Optional[str] = Form("all"),
     target_col: Optional[str] = Form(None)
 ):
@@ -96,6 +119,17 @@ async def calculate_correlations_endpoint(
     pooled_df_all, all_common_cols = pool_datasets(dfs, None)
     if pooled_df_all.empty or len(all_common_cols) < 2:
         raise HTTPException(status_code=400, detail="At least 2 common numeric sensor columns are required across selected runs.")
+
+    # Filter out any excluded / ruled-out sensors
+    if excluded_columns_json:
+        try:
+            ex_cols = set(json.loads(excluded_columns_json))
+            all_common_cols = [c for c in all_common_cols if c not in ex_cols]
+        except Exception:
+            pass
+
+    if len(all_common_cols) < 2:
+        raise HTTPException(status_code=400, detail="At least 2 common numeric sensor columns required after exclusions.")
 
     target_clean = target_col.strip() if target_col and str(target_col).strip() else None
     active_target = target_clean if (target_clean and target_clean in all_common_cols) else None
@@ -294,4 +328,80 @@ async def ml_train_endpoint(
         return result
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Model training error: {str(e)}")
+
+
+@router.post("/analytics/construct-feature")
+async def construct_feature_endpoint(req: FeatureConstructionRequest):
+    """
+    Constructs an engineered feature (rolling stats, derivatives, multi-sensor operations,
+    non-linear transforms) and appends it to all specified runs in cache.
+    """
+    from main import uploaded_files_cache
+
+    fids = req.file_ids or ([req.file_id] if req.file_id else [])
+    if not fids:
+        raise HTTPException(status_code=400, detail="file_ids or file_id required.")
+
+    target_dfs = []
+    for fid in fids:
+        if fid in uploaded_files_cache:
+            target_dfs.append(uploaded_files_cache[fid]["df"])
+
+    if not target_dfs:
+        raise HTTPException(status_code=404, detail="None of the specified files were found in cache.")
+
+    try:
+        result = construct_engineered_feature(
+            target_dfs=target_dfs,
+            operation=req.operation,
+            source_cols=req.source_cols,
+            new_sensor_name=req.new_sensor_name,
+            window_size=req.window_size or 10,
+            constant_val=req.constant_val or 1.0
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Feature engineering failed: {str(e)}")
+
+
+@router.post("/analytics/rul-prognosis")
+async def rul_prognosis_endpoint(req: RulPrognosisRequest):
+    """
+    Computes Remaining Useful Life (RUL) and forward degradation trajectory projection
+    for a chosen sensor reaching a critical failure threshold.
+    """
+    from main import uploaded_files_cache
+
+    fids = req.file_ids or ([req.file_id] if req.file_id else [])
+    dfs = []
+    for fid in fids:
+        if fid in uploaded_files_cache:
+            dfs.append(uploaded_files_cache[fid]["df"])
+
+    if not dfs:
+        raise HTTPException(status_code=404, detail="No active sensor datasets found.")
+
+    pooled_df, _ = pool_datasets(dfs, [req.target_col])
+    if pooled_df.empty or req.target_col not in pooled_df.columns:
+        raise HTTPException(status_code=400, detail=f"Target column '{req.target_col}' not found in pooled dataset.")
+
+    try:
+        result = calculate_rul_prognosis(
+            df=pooled_df,
+            target_col=req.target_col,
+            threshold=req.threshold,
+            direction=req.direction or "increasing",
+            model_type=req.model_type or "exponential",
+            forecast_horizon_max=req.forecast_horizon_max or 1000
+        )
+        result["total_runs"] = len(dfs)
+        result["total_samples"] = len(pooled_df)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"RUL Prognosis calculation failed: {str(e)}")
+
 
