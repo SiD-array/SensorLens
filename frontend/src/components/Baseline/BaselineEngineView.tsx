@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { 
   Upload, Sliders, Activity, RefreshCw, BarChart2, 
@@ -73,6 +73,11 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
   const [refFileNames, setRefFileNames] = useState<string[]>(() => 
     getSessionItem(STORAGE_KEYS.REF_NAMES, [])
   );
+  const [selectedWorkspaceRefIds, setSelectedWorkspaceRefIds] = useState<string[]>(() => {
+    const refTagged = files.filter(f => f.tag === 'reference').map(f => f.id);
+    if (refTagged.length > 0) return refTagged;
+    return files.length > 0 ? [files[0].id] : [];
+  });
   const [isBuilding, setIsBuilding] = useState(false);
   const [baselineProfile, setBaselineProfile] = useState<BaselineProfile | null>(() => 
     getSessionItem(STORAGE_KEYS.PROFILE, null)
@@ -116,6 +121,30 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
       return () => clearTimeout(timer);
     }
   }, [isActive]);
+
+  // Auto-detect available numeric channels from files
+  const availableColumns = useMemo(() => {
+    const colSet = new Set<string>();
+    files.forEach(f => {
+      f.columns.filter(c => c.type === 'numeric').forEach(c => colSet.add(c.name));
+    });
+    return Array.from(colSet);
+  }, [files]);
+
+  useEffect(() => {
+    if (selectedWorkspaceRefIds.length === 0 && files.length > 0) {
+      const refTagged = files.filter(f => f.tag === 'reference').map(f => f.id);
+      setSelectedWorkspaceRefIds(refTagged.length > 0 ? refTagged : [files[0].id]);
+    }
+  }, [files]);
+
+  useEffect(() => {
+    if (availableColumns.length > 0 && !availableColumns.includes(targetCol)) {
+      const fmc = availableColumns.find(c => c.toUpperCase().includes('FMC'));
+      const timeOrProgress = availableColumns.find(c => /time|cycle|step|progress/i.test(c));
+      setTargetCol(fmc || timeOrProgress || availableColumns[0]);
+    }
+  }, [availableColumns]);
 
   // Synchronize state changes to sessionStorage
   useEffect(() => {
@@ -251,23 +280,38 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
 
   // Build Baseline Endpoint Call
   const handleBuildBaseline = async () => {
-    if (refFilesList.length === 0) return;
+    const hasFiles = refFilesList.length > 0 || selectedWorkspaceRefIds.length > 0;
+    if (!hasFiles) return;
     setIsBuilding(true);
     setEvalError(null);
 
     try {
-      const formData = new FormData();
-      refFilesList.forEach(file => {
-        formData.append('files', file);
-      });
-      formData.append('target_col', targetCol);
-      formData.append('direction', direction);
-      formData.append('threshold_pct', '2.0');
+      let res: Response;
+      if (refFilesList.length > 0) {
+        const formData = new FormData();
+        refFilesList.forEach(file => {
+          formData.append('files', file);
+        });
+        formData.append('target_col', targetCol);
+        formData.append('direction', direction);
+        formData.append('threshold_pct', '2.0');
 
-      const res = await fetch('http://localhost:8000/api/baseline/build', {
-        method: 'POST',
-        body: formData
-      });
+        res = await fetch('http://localhost:8000/api/baseline/build', {
+          method: 'POST',
+          body: formData
+        });
+      } else {
+        res = await fetch('http://localhost:8000/api/baseline/build-from-workspace', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            file_ids: selectedWorkspaceRefIds,
+            target_col: targetCol,
+            direction: direction,
+            threshold_pct: 2.0
+          })
+        });
+      }
 
       if (!res.ok) {
         const errJson = await res.json().catch(() => ({}));
@@ -275,7 +319,10 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
       }
       const data: BaselineProfile = await res.json();
       setBaselineProfile(data);
-      setRefFileNames(refFilesList.map(f => f.name));
+      const names = refFilesList.length > 0
+        ? refFilesList.map(f => f.name)
+        : files.filter(f => selectedWorkspaceRefIds.includes(f.id)).map(f => f.name);
+      setRefFileNames(names);
 
       // Auto select first channel for evaluation view
       if (data.availability_matrix && data.availability_matrix.length > 0) {
@@ -747,9 +794,42 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
               />
             </div>
 
-            {/* Reference Files Pill Container */}
-            {refFilesList.length > 0 ? (
-              <div className="sidebar-files-pills">
+            {/* Workspace Reference Runs Selector */}
+            {files.length > 0 && (
+              <div style={{ marginBottom: '10px' }}>
+                <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginBottom: '4px', display: 'flex', justifyContent: 'space-between' }}>
+                  <span>From Workspace Runs:</span>
+                  <span style={{ color: 'var(--accent-cyan)' }}>{selectedWorkspaceRefIds.length} selected</span>
+                </div>
+                <div className="test-selection-list" style={{ maxHeight: '110px' }}>
+                  {files.map(f => {
+                    const isChecked = selectedWorkspaceRefIds.includes(f.id);
+                    return (
+                      <label key={f.id} className={`test-selection-item ${isChecked ? 'checked' : ''}`}>
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => {
+                            setSelectedWorkspaceRefIds(prev => 
+                              prev.includes(f.id) ? prev.filter(id => id !== f.id) : [...prev, f.id]
+                            );
+                          }}
+                          className="test-checkbox"
+                        />
+                        <span className="test-file-title" title={f.name}>{f.name}</span>
+                        {f.tag === 'reference' && (
+                          <span style={{ fontSize: '0.6rem', color: 'var(--accent-cyan)', background: 'rgba(0, 242, 254, 0.12)', padding: '1px 4px', borderRadius: '3px' }}>REF</span>
+                        )}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Reference Files Pill Container for local files */}
+            {refFilesList.length > 0 && (
+              <div className="sidebar-files-pills" style={{ marginBottom: '8px' }}>
                 {refFilesList.map((f, i) => (
                   <span key={i} className="sidebar-file-chip">
                     <span className="chip-name" title={f.name}>{f.name}</span>
@@ -757,7 +837,9 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
                   </span>
                 ))}
               </div>
-            ) : refFileNames.length > 0 ? (
+            )}
+
+            {refFilesList.length === 0 && files.length === 0 && refFileNames.length > 0 && (
               <div className="sidebar-files-pills">
                 {refFileNames.map((name, i) => (
                   <span key={i} className="sidebar-file-chip loaded">
@@ -765,7 +847,9 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
                   </span>
                 ))}
               </div>
-            ) : (
+            )}
+
+            {refFilesList.length === 0 && files.length === 0 && refFileNames.length === 0 && (
               <div 
                 onClick={() => multiFileInputRef.current?.click()}
                 className="sidebar-empty-box"
@@ -778,13 +862,26 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
             {/* Normalization Target Column */}
             <div className="sidebar-field-group">
               <label className="field-label">Cycle Progress Sensor:</label>
-              <input 
-                type="text" 
-                value={targetCol}
-                onChange={(e) => setTargetCol(e.target.value)}
-                placeholder="e.g. FMC% or Temperature"
-                className="field-input"
-              />
+              {availableColumns.length > 0 ? (
+                <select 
+                  value={targetCol}
+                  onChange={(e) => setTargetCol(e.target.value)}
+                  className="field-input"
+                  style={{ cursor: 'pointer' }}
+                >
+                  {availableColumns.map(col => (
+                    <option key={col} value={col}>{col}</option>
+                  ))}
+                </select>
+              ) : (
+                <input 
+                  type="text" 
+                  value={targetCol}
+                  onChange={(e) => setTargetCol(e.target.value)}
+                  placeholder="e.g. FMC% or Temperature"
+                  className="field-input"
+                />
+              )}
             </div>
 
             {/* Cycle Direction Toggle */}
@@ -847,7 +944,7 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
 
             <button 
               onClick={handleBuildBaseline}
-              disabled={isBuilding || refFilesList.length === 0}
+              disabled={isBuilding || (refFilesList.length === 0 && selectedWorkspaceRefIds.length === 0)}
               className="btn btn-primary btn-generate-baseline"
             >
               {isBuilding ? <RefreshCw className="animate-spin" size={14} /> : <Sliders size={14} />}

@@ -151,6 +151,47 @@ async def build_baseline_endpoint(
 
     return result
 
+class BuildWorkspaceBaselineRequest(BaseModel):
+    file_ids: List[str]
+    target_col: Optional[str] = "FMC%"
+    direction: Optional[str] = "downward"
+    threshold_pct: Optional[float] = 2.0
+
+@router.post("/baseline/build-from-workspace")
+async def build_baseline_from_workspace_endpoint(req: BuildWorkspaceBaselineRequest):
+    """
+    Builds a multi-reference baseline directly from workspace runs stored in in-memory cache.
+    """
+    from main import uploaded_files_cache
+    if not req.file_ids:
+        raise HTTPException(status_code=400, detail="At least one workspace file ID must be specified.")
+
+    runs_data = []
+    for fid in req.file_ids:
+        if fid in uploaded_files_cache:
+            file_info = uploaded_files_cache[fid]
+            df = file_info.get("df")
+            runs_data.append({
+                "name": file_info.get("name", fid),
+                "df": df.copy() if df is not None else None
+            })
+
+    if not runs_data:
+        raise HTTPException(status_code=404, detail="None of the specified runs were found in workspace cache.")
+
+    result = build_multi_reference_baseline(
+        runs_data=runs_data,
+        target_col=req.target_col or "FMC%",
+        direction=req.direction or "downward",
+        grid_points=500,
+        threshold_pct=req.threshold_pct or 2.0
+    )
+
+    if result.get("success"):
+        current_baseline_cache["active"] = result
+
+    return result
+
 @router.get("/baseline/active")
 async def get_active_baseline():
     """

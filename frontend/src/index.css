@@ -3471,7 +3471,7 @@ h1, h2, h3, h4 {
 
 .roadmap-steps-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
 }
 
@@ -6837,6 +6837,9 @@ h1, h2, h3, h4 {
   flex-wrap: wrap;
   gap: 4px;
   margin-top: 4px;
+  max-height: 80px;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
 .excluded-chip {
@@ -7106,6 +7109,62 @@ h1, h2, h3, h4 {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.sidebar-section-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  background: rgba(17, 24, 39, 0.7);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+}
+
+.rul-concept-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  background: rgba(0, 242, 254, 0.05);
+  border: 1px solid rgba(0, 242, 254, 0.18);
+  border-radius: 10px;
+  margin-top: 4px;
+}
+
+.rul-advisory-card {
+  background: linear-gradient(145deg, rgba(15, 23, 42, 0.85) 0%, rgba(30, 41, 59, 0.75) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+}
+
+.advisory-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding-bottom: 8px;
+}
+
+.advisory-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.advisory-desc {
+  font-size: 0.82rem;
+  color: #cbd5e1;
+  line-height: 1.55;
+  margin: 0;
 }
 
 

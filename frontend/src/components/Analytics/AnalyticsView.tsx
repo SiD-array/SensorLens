@@ -804,7 +804,17 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
   // CHART BUILDERS
   // -------------------------------------------------------------
   const getTargetTornadoOption = () => {
-    if (!corrData || activeDrivers.length === 0) return {};
+    if (!corrData || activeDrivers.length === 0) {
+      return {
+        backgroundColor: 'transparent',
+        title: {
+          text: 'No predictive drivers available. Check channel selections or exclusions.',
+          left: 'center',
+          top: 'center',
+          textStyle: { color: '#94a3b8', fontSize: 13, fontWeight: 'normal' }
+        }
+      };
+    }
 
     const reversed = [...activeDrivers].reverse();
     const categories = reversed.map(d => d.column);
@@ -848,9 +858,17 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
         },
         splitLine: { 
           lineStyle: { 
-            color: (params: any) => params === 0 ? 'rgba(255, 255, 255, 0.4)' : 'rgba(255, 255, 255, 0.08)',
+            color: 'rgba(255, 255, 255, 0.08)',
             width: 1
           } 
+        },
+        axisLine: {
+          show: true,
+          onZero: true,
+          lineStyle: {
+            color: 'rgba(255, 255, 255, 0.4)',
+            width: 1.5
+          }
         }
       },
       yAxis: {
@@ -1789,6 +1807,9 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
 
                       <div className="tornado-canvas-container">
                         <ReactECharts
+                          key="tornado-chart"
+                          notMerge={true}
+                          lazyUpdate={false}
                           option={getTargetTornadoOption()}
                           onEvents={{
                             click: (params: any) => {
@@ -1882,6 +1903,9 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
                     </div>
                     <div className="corr-heatmap-chart">
                       <ReactECharts
+                        key="heatmap-chart"
+                        notMerge={true}
+                        lazyUpdate={false}
                         option={getCorrelationHeatmapOption()}
                         onEvents={{
                           click: (params: any) => {
@@ -2306,99 +2330,122 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
       {/* TAB 3: REMAINING USEFUL LIFE (RUL) PROGNOSTICS STUDIO                     */}
       {/* ========================================================================= */}
       {activeTab === 'rul' && (
-        <div className="rul-studio-container">
-          {/* Top Grid: Controls + KPI Cards */}
-          <div className="rul-top-grid">
-            {/* Controls Card */}
-            <div className="rul-controls-card">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '10px' }}>
-                <Clock size={16} className="text-accent-cyan" />
-                <span style={{ fontSize: '0.88rem', fontWeight: 700, color: '#f8fafc' }}>Prognostic Parameters</span>
-              </div>
-
-              <div className="composite-field-group">
-                <label className="field-label">1. Health / Degradation Indicator</label>
-                <select
-                  value={rulTarget}
-                  onChange={(e) => setRulTarget(e.target.value)}
-                  className="field-select"
-                >
-                  <option value="">Select Sensor Indicator...</option>
-                  {numericColumns.map(col => (
-                    <option key={col} value={col}>{col}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="composite-field-group">
-                <label className="field-label">2. Degradation Trajectory</label>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                  <button
-                    type="button"
-                    onClick={() => setRulDirection('increasing')}
-                    className={`btn-toggle ${rulDirection === 'increasing' ? 'active' : ''}`}
-                    style={{ fontSize: '0.78rem', padding: '6px' }}
-                  >
-                    <TrendingUp size={12} /> Increasing (Wear/Temp)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setRulDirection('decreasing')}
-                    className={`btn-toggle ${rulDirection === 'decreasing' ? 'active' : ''}`}
-                    style={{ fontSize: '0.78rem', padding: '6px' }}
-                  >
-                    <Activity size={12} /> Decreasing (Efficiency)
-                  </button>
+        <div className="analytics-body-grid">
+          {/* Left Controls & Parameters Sidebar */}
+          <aside className="analytics-sidebar">
+            {/* 1. Degradation Indicator Target Card */}
+            <div className="target-objective-card">
+              <div className="target-header-row">
+                <div className="target-label-group">
+                  <Target size={14} className="text-accent-cyan" />
+                  <span className="target-label-text">1. Degradation Target</span>
                 </div>
+                <span className="target-badge-pill">INDICATOR</span>
               </div>
-
-              <div className="composite-field-group">
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <label className="field-label">3. Critical Failure Threshold</label>
-                </div>
-                <input
-                  type="number"
-                  step="any"
-                  value={rulThreshold}
-                  onChange={(e) => setRulThreshold(parseFloat(e.target.value) || 0)}
-                  className="field-input"
-                  placeholder="e.g. 100.0"
-                />
-              </div>
-
-              <div className="composite-field-group">
-                <label className="field-label">4. Curve Fitting Model</label>
-                <select
-                  value={rulModelType}
-                  onChange={(e) => setRulModelType(e.target.value as any)}
-                  className="field-select"
-                >
-                  <option value="exponential">Exponential Degradation (Scipy curve_fit)</option>
-                  <option value="polynomial">Polynomial Quadratic Extrapolation</option>
-                  <option value="linear">Linear Trend Projection</option>
-                </select>
-              </div>
-
-              {rulError && (
-                <div className="analytics-error-card">
-                  <AlertTriangle size={14} className="text-red-400" />
-                  <span>{rulError}</span>
-                </div>
-              )}
-
-              <button
-                type="button"
-                onClick={handleRunRULPrognosis}
-                disabled={isLoadingRUL || !rulTarget}
-                className="btn btn-primary"
-                style={{ width: '100%', marginTop: '6px' }}
+              <p style={{ fontSize: '0.74rem', color: '#94a3b8', margin: '2px 0 6px 0' }}>
+                Select sensor indicating component wear, thermal stress, or degradation.
+              </p>
+              <select
+                value={rulTarget}
+                onChange={(e) => setRulTarget(e.target.value)}
+                className="target-select-dropdown"
               >
-                {isLoadingRUL ? <RefreshCw className="animate-spin" size={14} /> : <Play size={14} />}
-                <span>Estimate Remaining Useful Life</span>
-              </button>
+                <option value="">Select Sensor Indicator...</option>
+                {availableNumericColumns.map(col => (
+                  <option key={col} value={col}>{col}</option>
+                ))}
+              </select>
             </div>
 
-            {/* KPI Cards Wrapper */}
+            {/* 2. Operational Failure Limit */}
+            <div className="sidebar-section-card">
+              <span className="section-title">2. Operational Limits</span>
+              <p className="section-hint" style={{ marginBottom: '8px' }}>
+                Specify if defect causes sensor to climb or decay toward limit.
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '10px' }}>
+                <button
+                  type="button"
+                  onClick={() => setRulDirection('increasing')}
+                  className={`btn-toggle ${rulDirection === 'increasing' ? 'active' : ''}`}
+                  style={{ fontSize: '0.76rem', padding: '8px 4px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}
+                >
+                  <TrendingUp size={13} className="text-red-400" />
+                  <span>Increasing (Wear)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRulDirection('decreasing')}
+                  className={`btn-toggle ${rulDirection === 'decreasing' ? 'active' : ''}`}
+                  style={{ fontSize: '0.76rem', padding: '8px 4px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}
+                >
+                  <Activity size={13} className="text-cyan-400" />
+                  <span>Decreasing (Flow)</span>
+                </button>
+              </div>
+
+              <label className="field-label" style={{ fontSize: '0.76rem', fontWeight: 600, color: '#cbd5e1', marginBottom: '4px', display: 'block' }}>
+                Failure Boundary Threshold
+              </label>
+              <input
+                type="number"
+                step="any"
+                value={rulThreshold}
+                onChange={(e) => setRulThreshold(parseFloat(e.target.value) || 0)}
+                className="field-input"
+                placeholder="e.g. 95.0"
+              />
+            </div>
+
+            {/* 3. Mathematical Extrapolation Model */}
+            <div className="sidebar-section-card">
+              <span className="section-title">3. Prognostic Model</span>
+              <p className="section-hint" style={{ marginBottom: '8px' }}>
+                Curve fitting algorithm for future horizon extrapolation.
+              </p>
+              <select
+                value={rulModelType}
+                onChange={(e) => setRulModelType(e.target.value as any)}
+                className="field-select"
+              >
+                <option value="exponential">Exponential Degradation (Scipy curve_fit)</option>
+                <option value="polynomial">Polynomial Quadratic Extrapolation</option>
+                <option value="linear">Linear Trend Projection</option>
+              </select>
+            </div>
+
+            {rulError && (
+              <div className="analytics-error-card">
+                <AlertTriangle size={14} className="text-red-400" />
+                <span>{rulError}</span>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={handleRunRULPrognosis}
+              disabled={isLoadingRUL || !rulTarget}
+              className="btn btn-primary btn-run-benchmark"
+            >
+              {isLoadingRUL ? <RefreshCw className="animate-spin" size={15} /> : <Play size={15} />}
+              <span>Estimate Remaining Useful Life</span>
+            </button>
+
+            {/* Quick Concept & Threshold Guide Card */}
+            <div className="rul-concept-card">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#00f2fe', fontWeight: 700, fontSize: '0.78rem' }}>
+                <HelpCircle size={14} />
+                <span>How RUL Prognostics Works</span>
+              </div>
+              <p style={{ fontSize: '0.73rem', color: '#94a3b8', lineHeight: 1.45, margin: 0 }}>
+                Fits mathematical degradation curves to your telemetry to extrapolate the future operating cycle where the signal intersects the critical failure threshold limit.
+              </p>
+            </div>
+          </aside>
+
+          {/* Right Main Stage */}
+          <main className="analytics-main-stage">
+            {/* Top KPI Cards Row */}
             <div className="rul-kpis-wrapper">
               <div className="rul-kpi-card">
                 <div className="rul-kpi-label">
@@ -2413,7 +2460,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
                 {rulResult && (
                   <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
                     {rulResult.rul_samples !== null 
-                      ? `Expected failure at cycle ${Math.round(rulResult.historical.length + rulResult.rul_samples)}`
+                      ? `Expected failure at cycle #${Math.round(rulResult.historical.length + rulResult.rul_samples)}`
                       : rulResult.rul_str}
                   </div>
                 )}
@@ -2435,66 +2482,95 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
 
               <div className="rul-kpi-card">
                 <div className="rul-kpi-label">
-                  <Activity size={14} /> Current Sensor Value
+                  <Activity size={14} /> Current vs Limit Margin
                 </div>
                 <div className="rul-kpi-value">
                   {rulResult ? rulResult.current_val.toFixed(2) : '--'}
                 </div>
                 {rulResult && (
                   <div style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
-                    Threshold: {rulResult.threshold.toFixed(2)} ({rulResult.direction})
+                    Limit: {rulResult.threshold.toFixed(2)} (Margin: {Math.abs(rulResult.threshold - rulResult.current_val).toFixed(2)})
                   </div>
                 )}
               </div>
 
               <div className="rul-kpi-card">
                 <div className="rul-kpi-label">
-                  <Sliders size={14} /> Fitted Degradation Model
+                  <Sliders size={14} /> Model & Drift Velocity
                 </div>
                 <div className="rul-kpi-value" style={{ fontSize: '1.05rem', color: '#00f2fe' }}>
                   {rulResult ? rulResult.model_used.toUpperCase() : '--'}
                 </div>
                 {rulResult && (
                   <div style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
-                    Rate: {rulResult.degradation_rate_100.toFixed(2)} / 100 cycles
+                    Rate: {rulResult.degradation_rate_100.toFixed(2)} units / 100 cycles
                   </div>
                 )}
               </div>
             </div>
-          </div>
 
-          {/* Chart Card */}
-          <div className="rul-chart-card">
-            <div className="rul-chart-header">
-              <div className="rul-chart-title">
-                <Activity size={16} className="text-accent-cyan" />
-                <span>Sensor Degradation Trajectory & Forward Prognostic Horizon</span>
+            {/* Trajectory Horizon Chart Card */}
+            <div className="rul-chart-card">
+              <div className="rul-chart-header">
+                <div className="rul-chart-title">
+                  <Activity size={16} className="text-accent-cyan" />
+                  <span>Degradation Curve & Forward Prognostic Horizon</span>
+                </div>
+                {rulResult && (
+                  <div style={{ display: 'flex', gap: '14px', fontSize: '0.75rem', color: '#94a3b8', flexWrap: 'wrap' }}>
+                    <span><b style={{ color: '#00f2fe' }}>● Cyan</b>: Observed Telemetry</span>
+                    <span><b style={{ color: '#818cf8' }}>┄ Purple</b>: Fitted Baseline</span>
+                    <span><b style={{ color: '#fbbf24' }}>--- Gold</b>: Extrapolated Horizon</span>
+                    <span><b style={{ color: '#f43f5e' }}>--- Red</b>: Failure Threshold ({rulResult.threshold})</span>
+                  </div>
+                )}
               </div>
-              {rulResult && (
-                <div style={{ display: 'flex', gap: '12px', fontSize: '0.75rem', color: '#94a3b8' }}>
-                  <span><b style={{ color: '#00f2fe' }}>Cyan</b>: Observed Signal</span>
-                  <span><b style={{ color: '#fbbf24' }}>Gold</b>: Degradation Fit</span>
-                  <span><b style={{ color: '#f43f5e' }}>Magenta Dashed</b>: Prognosis Forecast</span>
-                  <span><b style={{ color: '#f43f5e' }}>Red Dotted</b>: Failure Threshold</span>
-                </div>
-              )}
+              <div style={{ flex: 1, minHeight: '440px', width: '100%' }}>
+                {rulResult ? (
+                  <ReactECharts
+                    key="rul-chart"
+                    notMerge={true}
+                    lazyUpdate={false}
+                    option={getRulChartOption()}
+                    style={{ height: '100%', minHeight: '440px', width: '100%' }}
+                    theme="dark"
+                  />
+                ) : (
+                  <div className="analytics-empty-state" style={{ height: '100%', minHeight: '440px' }}>
+                    <Clock size={52} className="text-accent-cyan" style={{ opacity: 0.6 }} />
+                    <h3>No Prognostic Run Executed</h3>
+                    <p>Select a degradation target sensor on the left, configure your operational failure limit, and click <b>Estimate Remaining Useful Life</b>.</p>
+                  </div>
+                )}
+              </div>
             </div>
-            <div style={{ flex: 1, minHeight: '380px', width: '100%' }}>
-              {rulResult ? (
-                <ReactECharts
-                  option={getRulChartOption()}
-                  style={{ height: '100%', minHeight: '380px', width: '100%' }}
-                  theme="dark"
-                />
-              ) : (
-                <div className="analytics-empty-state" style={{ height: '100%', minHeight: '380px' }}>
-                  <Clock size={48} className="text-accent-cyan" style={{ opacity: 0.6 }} />
-                  <h3>No Prognostic Run Executed</h3>
-                  <p>Choose a target sensor representing system wear or degradation, specify your operational failure limit, and click <b>Estimate Remaining Useful Life</b>.</p>
+
+            {/* Engineering Advisory Summary Panel */}
+            {rulResult && (
+              <div className="rul-advisory-card">
+                <div className="advisory-title-row">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Sparkles size={16} className="text-accent-cyan" />
+                    <span className="advisory-title">Engineering Advisory & Maintenance Plan</span>
+                  </div>
+                  <span className={`rul-kpi-status-badge ${rulResult.operating_state === 'HEALTHY' ? 'rul-status-healthy' : rulResult.operating_state === 'WARNING' ? 'rul-status-warning' : 'rul-status-critical'}`}>
+                    {rulResult.operating_state}
+                  </span>
                 </div>
-              )}
-            </div>
-          </div>
+                <p className="advisory-desc">
+                  {rulResult.operating_state === 'HEALTHY' && (
+                    `Component health is at ${rulResult.health_index_pct.toFixed(1)}% with an estimated ${Math.round(rulResult.rul_samples || 0)} operating cycles remaining. Telemetry indicates stable behavior without alarming drift.`
+                  )}
+                  {rulResult.operating_state === 'WARNING' && (
+                    `Accelerated degradation detected. Health index has dropped to ${rulResult.health_index_pct.toFixed(1)}%. It is recommended to schedule preventative component inspection within the next ${Math.round((rulResult.rul_samples || 0) * 0.6)} operating cycles.`
+                  )}
+                  {rulResult.operating_state === 'CRITICAL' && (
+                    `CRITICAL FAULT IMMINENT: Remaining Useful Life is critically depleted (${Math.round(rulResult.rul_samples || 0)} cycles remaining, Health Index at ${rulResult.health_index_pct.toFixed(1)}%). Immediate maintenance or replacement is required to avoid system breakdown.`
+                  )}
+                </p>
+              </div>
+            )}
+          </main>
         </div>
       )}
 

@@ -350,28 +350,50 @@ export default function App() {
   };
 
   const exportWorkspaceToOneDrive = async () => {
-    const sessionPayload = {
-      files: files.map(f => ({
-        id: f.id,
-        name: f.name,
-        tag: f.tag,
-        columns: f.columns
-      })),
-      tags: files.reduce((acc, f) => ({ ...acc, [f.id]: f.tag }), {}),
-      mappings,
-      saved_reports: [
-        {
-          ref_file_id: activeRefId,
-          test_file_id: activeTestId,
-          ref_file_name: files.find(f => f.id === activeRefId)?.name || 'Reference',
-          test_file_name: files.find(f => f.id === activeTestId)?.name || 'Test',
-          verdict: Object.values(similarityResults).every(r => r.category === 'match') ? 'Match' : 'Requires Review',
-          results: similarityResults
-        }
-      ]
-    };
-
     try {
+      // Fetch full telemetry data from backend
+      let backendFilesData: any[] = [];
+      try {
+        const res = await fetch('http://localhost:8000/api/workspace/export-session');
+        if (res.ok) {
+          const exportJson = await res.json();
+          backendFilesData = exportJson.files || [];
+        }
+      } catch (err) {
+        console.warn('Could not fetch backend telemetry for OneDrive export:', err);
+      }
+
+      const filesWithData = files.map(f => {
+        const backendMatch = backendFilesData.find(bf => bf.id === f.id);
+        return {
+          id: f.id,
+          name: f.name,
+          tag: f.tag,
+          rowCount: f.rowCount,
+          columns: f.columns,
+          data: backendMatch?.data || undefined
+        };
+      });
+
+      const sessionPayload = {
+        files: filesWithData,
+        tags: files.reduce((acc, f) => ({ ...acc, [f.id]: f.tag }), {}),
+        activeRefId,
+        activeTestId,
+        mappings,
+        selectedPlotCols,
+        saved_reports: [
+          {
+            ref_file_id: activeRefId,
+            test_file_id: activeTestId,
+            ref_file_name: files.find(f => f.id === activeRefId)?.name || 'Reference',
+            test_file_name: files.find(f => f.id === activeTestId)?.name || 'Test',
+            verdict: Object.values(similarityResults).every(r => r.category === 'match') ? 'Match' : 'Requires Review',
+            results: similarityResults
+          }
+        ]
+      };
+
       const response = await fetch('http://localhost:8000/api/workspace/export-one-drive', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -393,33 +415,61 @@ export default function App() {
     }
   };
 
-  const triggerLocalJsonDownload = () => {
-    const sessionPayload = {
-      files: files.map(f => ({
-        id: f.id,
-        name: f.name,
-        tag: f.tag,
-        columns: f.columns
-      })),
-      tags: files.reduce((acc, f) => ({ ...acc, [f.id]: f.tag }), {}),
-      mappings,
-      saved_reports: [
-        {
-          ref_file_id: activeRefId,
-          test_file_id: activeTestId,
-          results: similarityResults
+  const triggerLocalJsonDownload = async () => {
+    try {
+      // Fetch full telemetry data from backend
+      let backendFilesData: any[] = [];
+      try {
+        const res = await fetch('http://localhost:8000/api/workspace/export-session');
+        if (res.ok) {
+          const exportJson = await res.json();
+          backendFilesData = exportJson.files || [];
         }
-      ]
-    };
+      } catch (err) {
+        console.warn('Could not fetch backend telemetry for export:', err);
+      }
 
-    const blob = new Blob([JSON.stringify(sessionPayload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `sensorlens_session_${new Date().toISOString().slice(0,10)}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+      const filesWithData = files.map(f => {
+        const backendMatch = backendFilesData.find(bf => bf.id === f.id);
+        return {
+          id: f.id,
+          name: f.name,
+          tag: f.tag,
+          rowCount: f.rowCount,
+          columns: f.columns,
+          data: backendMatch?.data || undefined
+        };
+      });
+
+      const sessionPayload = {
+        files: filesWithData,
+        tags: files.reduce((acc, f) => ({ ...acc, [f.id]: f.tag }), {}),
+        activeRefId,
+        activeTestId,
+        mappings,
+        selectedPlotCols,
+        saved_reports: [
+          {
+            ref_file_id: activeRefId,
+            test_file_id: activeTestId,
+            ref_file_name: files.find(f => f.id === activeRefId)?.name || 'Reference',
+            test_file_name: files.find(f => f.id === activeTestId)?.name || 'Test',
+            results: similarityResults
+          }
+        ]
+      };
+
+      const blob = new Blob([JSON.stringify(sessionPayload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `sensorlens_session_${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (e) {
+      alert('Failed to export workspace session.');
+    }
   };
 
   const handleImportWorkspace = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -431,7 +481,7 @@ export default function App() {
       try {
         const state = JSON.parse(event.target?.result as string);
         
-        // Push raw metadata into backend cache
+        // Push raw metadata and telemetry into backend cache
         const response = await fetch('http://localhost:8000/api/workspace/import-session', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -439,33 +489,69 @@ export default function App() {
         });
 
         if (response.ok) {
-          // Reconstruct frontend states
-          const importedFiles = (state.files || []).map((f: any) => ({
+          const importData = await response.json();
+          // Use validated reconstructed files from backend if available, or state.files
+          const sourceFiles = importData.files && importData.files.length > 0 
+            ? importData.files 
+            : (state.files || []);
+
+          const importedFiles = sourceFiles.map((f: any) => ({
             id: f.id,
             name: f.name,
             rowCount: f.rowCount || 100,
             columns: f.columns || [],
-            tag: state.tags?.[f.id] || 'useful'
+            tag: state.tags?.[f.id] || f.tag || 'useful'
           }));
 
           setFiles(importedFiles);
           
           // Reconstruct selections
-          const ref = importedFiles.find((f: any) => f.tag === 'reference');
-          if (ref) setActiveRefId(ref.id);
+          let foundRef = importedFiles.find((f: any) => f.tag === 'reference');
+          if (!foundRef && state.activeRefId) {
+            foundRef = importedFiles.find((f: any) => f.id === state.activeRefId);
+          }
+          if (foundRef) {
+            setActiveRefId(foundRef.id);
+          } else if (importedFiles.length > 0) {
+            setActiveRefId(importedFiles[0].id);
+          }
           
-          const test = importedFiles.find((f: any) => f.tag === 'useful');
-          if (test) setActiveTestId(test.id);
+          let foundTest = importedFiles.find((f: any) => f.id !== foundRef?.id && (f.tag === 'useful' || f.tag !== 'reference'));
+          if (!foundTest && state.activeTestId) {
+            foundTest = importedFiles.find((f: any) => f.id === state.activeTestId);
+          }
+          if (foundTest) {
+            setActiveTestId(foundTest.id);
+          } else if (importedFiles.length > 1) {
+            setActiveTestId(importedFiles[1].id);
+          }
 
-          setMappings(state.mappings || {});
+          if (state.mappings) {
+            setMappings(state.mappings);
+          }
           
           if (state.saved_reports && state.saved_reports[0]) {
             setSimilarityResults(state.saved_reports[0].results || {});
             const firstCol = Object.keys(state.saved_reports[0].results || {})[0];
             if (firstCol) setSelectedResultCol(firstCol);
           }
+
+          // Auto-select plot channels for Visual Report tab so it renders immediately
+          if (state.selectedPlotCols && state.selectedPlotCols.length > 0) {
+            setSelectedPlotCols(state.selectedPlotCols);
+          } else if (importedFiles.length > 0) {
+            const firstF = importedFiles[0];
+            const numCols = firstF.columns.filter((c: any) => c.type === 'numeric').slice(0, 3);
+            if (numCols.length > 0) {
+              setSelectedPlotCols(numCols.map((c: any) => ({
+                fileId: firstF.id,
+                colName: c.name,
+                fileName: firstF.name
+              })));
+            }
+          }
           
-          alert('Workspace imported successfully!');
+          alert(`Workspace session successfully imported!\n• Restored ${importedFiles.length} runs across all engines\n• Restored interactive mappings & diagnostics`);
         } else {
           alert('Import failed: Backend could not ingest cache.');
         }
@@ -898,40 +984,48 @@ export default function App() {
               <div className="panel-body">
                 {/* Visual Roadmap & Baseline Engine Explainer Banner */}
                 <div className="dashboard-roadmap-banner">
-                  <div className="roadmap-title-row">
-                    <div className="roadmap-title-left">
-                      <Lightbulb size={16} className="text-accent-cyan" />
-                      <span className="roadmap-title">System Architecture: How the 3 Engines Connect</span>
-                    </div>
-                    <span className="roadmap-badge">BSH Engineering Guide</span>
-                  </div>
+                   <div className="roadmap-title-row">
+                     <div className="roadmap-title-left">
+                       <Lightbulb size={16} className="text-accent-cyan" />
+                       <span className="roadmap-title">System Architecture: How the 4 Engines Connect</span>
+                     </div>
+                     <span className="roadmap-badge">BSH Engineering Guide</span>
+                   </div>
 
-                  <div className="roadmap-steps-grid">
-                    <div className="roadmap-step">
-                      <span className="step-tag">Step 1: Dashboard</span>
-                      <h4 className="step-heading">Tag Ref vs Test</h4>
-                      <p className="step-desc">
-                        Mark your known-good cycle as <b>Ref</b> (Golden Reference) and the run you want to diagnose as <b>Test</b>.
-                      </p>
-                    </div>
+                   <div className="roadmap-steps-grid">
+                     <div className="roadmap-step">
+                       <span className="step-tag">Step 1: Dashboard</span>
+                       <h4 className="step-heading">Tag Ref vs Test</h4>
+                       <p className="step-desc">
+                         Mark your known-good cycle as <b>Ref</b> (Golden Reference) and the run you want to diagnose as <b>Test</b>.
+                       </p>
+                     </div>
 
-                    <div className="roadmap-step">
-                      <span className="step-tag">Step 2: Visual & Alignment</span>
-                      <h4 className="step-heading">Plot & Align Channels</h4>
-                      <p className="step-desc">
-                        Inspect curves side-by-side. Use <b>Column Alignment</b> to auto-pair mismatched sensor names.
-                      </p>
-                    </div>
+                     <div className="roadmap-step">
+                       <span className="step-tag">Step 2: Visual & Alignment</span>
+                       <h4 className="step-heading">Plot & Align Channels</h4>
+                       <p className="step-desc">
+                         Inspect curves side-by-side. Use <b>Column Alignment</b> to auto-pair mismatched sensor names.
+                       </p>
+                     </div>
 
-                    <div className="roadmap-step highlight">
-                      <span className="step-tag highlight">Step 3: Baseline Engine</span>
-                      <h4 className="step-heading">Multi-Run Guardrails</h4>
-                      <p className="step-desc">
-                        Merge <i>multiple</i> reference runs into an averaged <b>Golden Standard</b>. Shaded tolerance corridors flag defects in <b>bright red</b>!
-                      </p>
-                    </div>
-                  </div>
-                </div>
+                     <div className="roadmap-step highlight">
+                       <span className="step-tag highlight">Step 3: Baseline Engine</span>
+                       <h4 className="step-heading">Multi-Run Guardrails</h4>
+                       <p className="step-desc">
+                         Merge <i>multiple</i> reference runs into an averaged <b>Golden Standard</b> with dynamic tolerance corridors.
+                       </p>
+                     </div>
+
+                     <div className="roadmap-step" style={{ borderColor: 'rgba(0, 242, 254, 0.4)', background: 'rgba(0, 242, 254, 0.08)' }}>
+                       <span className="step-tag" style={{ color: '#00f2fe' }}>Step 4: Analytics & Prognostics</span>
+                       <h4 className="step-heading">RUL & ML Studio</h4>
+                       <p className="step-desc">
+                         Discover driver correlations, benchmark 6 ML models, and extrapolate <b>Remaining Useful Life (RUL)</b>.
+                       </p>
+                     </div>
+                   </div>
+                 </div>
 
                 {/* Active Selection Info */}
                 <div className="overview-top-bar">
@@ -1429,12 +1523,22 @@ export default function App() {
               </div>
             </div>
 
+            <div className="guide-step highlight" style={{ borderLeft: '3px solid #00f2fe' }}>
+              <div className="guide-step-num" style={{ background: '#00f2fe', color: '#031024' }}>6</div>
+              <div className="guide-step-content">
+                <div className="guide-step-title">Analytics & RUL Prognostics Studio</div>
+                <div className="guide-step-desc">
+                  Use <b>Analytics & ML Studio</b> to rank predictive drivers, benchmark 6 ML regression models, and project <b>Remaining Useful Life (RUL)</b> with non-linear exponential degradation physics.
+                </div>
+              </div>
+            </div>
+
             <button 
               onClick={() => setShowGuide(false)}
               className="btn btn-primary"
               style={{ marginTop: '8px', padding: '12px 0', fontSize: '0.85rem', width: '100%' }}
             >
-              Let's Start Matching!
+              Let's Get Started!
             </button>
           </div>
         </div>
