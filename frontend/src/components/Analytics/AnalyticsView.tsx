@@ -7,7 +7,7 @@ import {
   Combine, ArrowUpDown, Check, Target,
   BarChart3, Grid3X3, Wrench, Activity,
   TrendingUp, Gauge, Clock, Sliders,
-  EyeOff
+  EyeOff, Search, RotateCcw, CheckCircle2, Eye
 } from 'lucide-react';
 import type { TestFile } from '../../types/baseline';
 
@@ -284,6 +284,9 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
   // -------------------------------------------------------------
   const [excludedSensors, setExcludedSensors] = useState<string[]>([]);
   const [autoExcludePCA, setAutoExcludePCA] = useState(true);
+  const [isExcludedModalOpen, setIsExcludedModalOpen] = useState(false);
+  const [excludedSearchQuery, setExcludedSearchQuery] = useState('');
+  const [excludedFilterTab, setExcludedFilterTab] = useState<'all' | 'excluded' | 'active'>('all');
 
   const handleRuleOutSensor = (col: string) => {
     setExcludedSensors(prev => Array.from(new Set([...prev, col])));
@@ -302,6 +305,21 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
   const availableNumericColumns = useMemo(() => {
     return numericColumns.filter(c => !excludedSensors.includes(c));
   }, [numericColumns, excludedSensors]);
+
+  // Filtered channels for the floating interactive window
+  const filteredModalSensors = useMemo(() => {
+    let list = numericColumns;
+    if (excludedFilterTab === 'excluded') {
+      list = list.filter(c => excludedSensors.includes(c));
+    } else if (excludedFilterTab === 'active') {
+      list = list.filter(c => !excludedSensors.includes(c));
+    }
+    if (excludedSearchQuery.trim()) {
+      const q = excludedSearchQuery.toLowerCase();
+      list = list.filter(c => c.toLowerCase().includes(q));
+    }
+    return list;
+  }, [numericColumns, excludedSensors, excludedFilterTab, excludedSearchQuery]);
 
   // -------------------------------------------------------------
   // FEATURE CONSTRUCTION & EXTRACTION STUDIO STATE
@@ -1546,7 +1564,24 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
             <div className="sidebar-divider" />
 
             <div className="sidebar-section-header">
-              <span className="section-title">3. Select Sensors ({selectedCorrChannels.length}/{availableNumericColumns.length} active)</span>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', marginBottom: '4px' }}>
+                <span className="section-title">3. Select Sensors ({selectedCorrChannels.length}/{availableNumericColumns.length} active)</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsExcludedModalOpen(true);
+                    setExcludedSearchQuery('');
+                  }}
+                  className={`btn-excluded-channels-trigger ${excludedSensors.length > 0 ? 'has-excluded' : ''}`}
+                  title="Open interactive window to add or remove excluded channels"
+                >
+                  <EyeOff size={11} />
+                  <span>Excluded Channels</span>
+                  {excludedSensors.length > 0 && (
+                    <span className="excluded-count-badge">{excludedSensors.length}</span>
+                  )}
+                </button>
+              </div>
               <div className="sidebar-quick-btns">
                 <button 
                   onClick={handleSelectTop20}
@@ -1621,41 +1656,6 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
                 </button>
               </div>
             </div>
-
-            {/* Excluded Sensors Banner */}
-            {excludedSensors.length > 0 && (
-              <div className="excluded-sensors-bar">
-                <div style={{ flex: 1, overflow: 'hidden' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                    <EyeOff size={12} />
-                    <span style={{ fontWeight: 600 }}>{excludedSensors.length} Excluded Channels</span>
-                  </div>
-                  <div className="excluded-chips-list">
-                    {excludedSensors.map(sc => (
-                      <span key={sc} className="excluded-chip">
-                        <span>{sc}</span>
-                        <button
-                          type="button"
-                          onClick={() => handleRestoreSensor(sc)}
-                          className="btn-restore-chip"
-                          title={`Restore ${sc} to correlation analysis`}
-                        >
-                          <X size={10} />
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleClearAllExclusions}
-                  className="btn-restore-chip"
-                  style={{ fontSize: '0.68rem', textDecoration: 'underline', alignSelf: 'flex-start', whiteSpace: 'nowrap' }}
-                >
-                  Restore All
-                </button>
-              </div>
-            )}
 
             {selectedFileIds.length === 0 ? (
               <div className="analytics-error-card" style={{ background: 'rgba(245, 158, 11, 0.12)', borderColor: 'rgba(245, 158, 11, 0.3)', color: '#fbbf24' }}>
@@ -2915,6 +2915,182 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
                 <span>Construct & Ingest Feature</span>
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* FLOATING INTERACTIVE WINDOW: EXCLUDED CHANNELS MANAGER */}
+      {isExcludedModalOpen && (
+        <div className="excluded-modal-backdrop" onClick={() => setIsExcludedModalOpen(false)}>
+          <div className="excluded-modal-card" onClick={(e) => e.stopPropagation()}>
+            
+            {/* Modal Header */}
+            <div className="excluded-modal-header">
+              <div className="excluded-modal-title-row">
+                <div className="excluded-title-icon-box">
+                  <EyeOff size={18} />
+                </div>
+                <div>
+                  <h3 className="excluded-modal-title">Excluded Channels Manager</h3>
+                  <p className="excluded-modal-subtitle">
+                    Rule out redundant or noisy sensors from correlation heatmaps, ranking algorithms, and target drivers.
+                  </p>
+                </div>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setIsExcludedModalOpen(false)} 
+                className="btn-modal-close"
+                title="Close floating window"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Modal Toolbar & Filter */}
+            <div className="excluded-modal-toolbar">
+              {/* Search Bar */}
+              <div className="excluded-search-wrapper">
+                <Search size={14} className="search-icon" />
+                <input
+                  type="text"
+                  placeholder="Search sensors to exclude or include..."
+                  value={excludedSearchQuery}
+                  onChange={(e) => setExcludedSearchQuery(e.target.value)}
+                  className="excluded-search-input"
+                  autoFocus
+                />
+                {excludedSearchQuery && (
+                  <button 
+                    type="button" 
+                    onClick={() => setExcludedSearchQuery('')}
+                    className="btn-clear-search"
+                    title="Clear search"
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+
+              {/* View Tabs & Quick Actions */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                <div className="excluded-filter-tabs">
+                  <button
+                    type="button"
+                    onClick={() => setExcludedFilterTab('all')}
+                    className={`excluded-tab-btn ${excludedFilterTab === 'all' ? 'active' : ''}`}
+                  >
+                    All Channels ({numericColumns.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setExcludedFilterTab('excluded')}
+                    className={`excluded-tab-btn ${excludedFilterTab === 'excluded' ? 'active' : ''}`}
+                  >
+                    Excluded ({excludedSensors.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setExcludedFilterTab('active')}
+                    className={`excluded-tab-btn ${excludedFilterTab === 'active' ? 'active' : ''}`}
+                  >
+                    Active ({availableNumericColumns.length})
+                  </button>
+                </div>
+
+                {excludedSensors.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleClearAllExclusions}
+                    className="btn-restore-all"
+                    title="Restore all excluded channels"
+                  >
+                    <RotateCcw size={12} />
+                    <span>Restore All ({excludedSensors.length})</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Interactive List */}
+            <div className="excluded-modal-list">
+              {filteredModalSensors.length === 0 ? (
+                <div className="excluded-modal-empty">
+                  <CheckCircle2 size={26} style={{ opacity: 0.5, marginBottom: '8px', color: '#10b981' }} />
+                  <span>
+                    {excludedFilterTab === 'excluded' 
+                      ? 'No channels are currently excluded. Click "Exclude" on any channel to rule it out.' 
+                      : excludedSearchQuery 
+                        ? `No channels matching "${excludedSearchQuery}"` 
+                        : 'No channels available in current run selection.'}
+                  </span>
+                </div>
+              ) : (
+                filteredModalSensors.map(col => {
+                  const isExcluded = excludedSensors.includes(col);
+                  return (
+                    <div 
+                      key={col} 
+                      className={`excluded-list-row ${isExcluded ? 'row-excluded' : 'row-active'}`}
+                    >
+                      <div className="excluded-row-info">
+                        <span className="channel-name-txt" title={col}>{col}</span>
+                        {isExcluded ? (
+                          <span className="badge-excluded-tag">
+                            <EyeOff size={10} />
+                            <span>Excluded</span>
+                          </span>
+                        ) : (
+                          <span className="badge-active-tag">
+                            <Check size={10} />
+                            <span>Active in Analysis</span>
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Action Button */}
+                      {isExcluded ? (
+                        <button
+                          type="button"
+                          onClick={() => handleRestoreSensor(col)}
+                          className="btn-action-restore"
+                          title={`Restore ${col} to correlation analysis`}
+                        >
+                          <Eye size={12} />
+                          <span>Restore Channel</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleRuleOutSensor(col)}
+                          className="btn-action-exclude"
+                          title={`Exclude ${col} from correlation analysis`}
+                        >
+                          <EyeOff size={12} />
+                          <span>Exclude</span>
+                        </button>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="excluded-modal-footer">
+              <span className="excluded-footer-hint">
+                💡 Tip: Add or remove sensors here anytime. Changes update correlations and drivers live.
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsExcludedModalOpen(false)}
+                className="btn btn-primary"
+                style={{ padding: '7px 22px', fontSize: '0.82rem' }}
+              >
+                Done
+              </button>
+            </div>
+
           </div>
         </div>
       )}
