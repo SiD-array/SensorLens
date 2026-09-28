@@ -9,9 +9,11 @@ import {
 } from 'lucide-react';
 import type { TestFile, LexicalMatchItem, PairScoreResult } from '../../types/baseline';
 import { BucketManagerModal } from '../VisualReport/BucketManagerModal';
+import { HelpPopover } from '../ui/HelpPopover';
 import { 
   loadBuckets, saveBuckets, loadBucketMap, saveBucketMap, resolveSensorBucket 
 } from '../VisualReport/bucketUtils';
+
 import type { SensorBucket, SensorBucketMap } from '../VisualReport/bucketUtils';
 
 interface ColumnAlignmentViewProps {
@@ -25,7 +27,7 @@ interface ColumnAlignmentViewProps {
   onRunSimilarityEngine?: () => void;
 }
 
-export function computeAlignmentBadge(
+function computeAlignmentBadge(
   refColName: string, 
   currentTestColName: string | undefined, 
   lexicalMatches: LexicalMatchItem[]
@@ -295,10 +297,34 @@ export const ColumnAlignmentView: React.FC<ColumnAlignmentViewProps> = ({
     setUnassignedPool([...unassignedPool, occupant]);
   };
 
+  // Keyboard-accessible assign handler
+  const handleAssignToSlot = (refColName: string, testColName: string) => {
+    const existingOccupant = mappings[refColName];
+    const updatedMappings = { ...mappings };
+    
+    // If testCol was mapped elsewhere, clear that slot
+    Object.keys(updatedMappings).forEach(k => {
+      if (updatedMappings[k] === testColName) {
+        updatedMappings[k] = '';
+      }
+    });
+    updatedMappings[refColName] = testColName;
+
+    // Update unassigned pool
+    let newPool = unassignedPool.filter(c => c !== testColName);
+    if (existingOccupant && existingOccupant !== testColName) {
+      newPool.push(existingOccupant);
+    }
+    setMappings(updatedMappings);
+    setUnassignedPool(newPool);
+    triggerDebouncedPairScore(refColName, testColName);
+  };
+
   const filteredUnassignedPool = useMemo(() => {
     if (categoryFilter === 'all') return unassignedPool;
     return unassignedPool.filter(c => resolveSensorBucket(c, buckets, bucketMap).id === categoryFilter);
   }, [unassignedPool, categoryFilter, buckets, bucketMap]);
+
 
   return (
     <div className="column-alignment-layout">
@@ -306,11 +332,20 @@ export const ColumnAlignmentView: React.FC<ColumnAlignmentViewProps> = ({
       <div className="alignment-header-bar">
         <div className="alignment-header-left">
           <h2>Two-Stage Interactive Column Alignment</h2>
-          <p className="alignment-header-desc">
-            Stage 1 uses deterministic lexical rules (casing, engineering unit stripping, Levenshtein ≥ 0.85).
-            Stage 2 lets you drag unassigned test sensors into slots with real-time Pearson <i>r</i> & DTW scoring.
-          </p>
+          <div className="alignment-header-desc" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <span>Stage 1 uses deterministic lexical rules. Stage 2 provides real-time scoring:</span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <b>Pearson r</b>
+              <HelpPopover topic="pearson" />
+            </span>
+            <span>&</span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <b>FastDTW</b>
+              <HelpPopover topic="fastdtw" />
+            </span>
+          </div>
         </div>
+
 
         <div className="alignment-header-actions">
           <button 
@@ -555,10 +590,39 @@ export const ColumnAlignmentView: React.FC<ColumnAlignmentViewProps> = ({
                                 )}
                               </Draggable>
                             ) : (
-                              <div className="empty-drop-placeholder">
-                                <span>Empty Target Slot (Drag test channel here)</span>
+                              <div className="empty-drop-placeholder" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 8 }}>
+                                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                                  Drag test channel here or:
+                                </span>
+                                <select
+                                  aria-label={`Assign test channel to ${refCol.name}`}
+                                  className="slot-keyboard-assign-select"
+                                  value=""
+                                  onChange={(e) => {
+                                    if (e.target.value) {
+                                      handleAssignToSlot(refCol.name, e.target.value);
+                                    }
+                                  }}
+                                  style={{
+                                    background: 'rgba(0, 0, 0, 0.45)',
+                                    border: '1px solid var(--border-color)',
+                                    color: 'var(--text-secondary)',
+                                    fontSize: '11px',
+                                    padding: '3px 8px',
+                                    borderRadius: 'var(--radius-sm)',
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  <option value="">Choose channel...</option>
+                                  {testFile?.columns.map(c => (
+                                    <option key={c.name} value={c.name}>
+                                      {c.name} {unassignedPool.includes(c.name) ? '(Available)' : '(Assigned)'}
+                                    </option>
+                                  ))}
+                                </select>
                               </div>
                             )}
+
                             {provided.placeholder}
                           </div>
                         )}

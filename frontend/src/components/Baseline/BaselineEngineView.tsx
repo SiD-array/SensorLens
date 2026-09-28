@@ -3,11 +3,13 @@ import ReactECharts from 'echarts-for-react';
 import { 
   Upload, Sliders, Activity, RefreshCw, BarChart2, 
   ArrowDown, ArrowUp, Lightbulb, CheckCircle2, AlertTriangle, Trash2,
-  Layers, ListFilter
+  Layers, ListFilter, Download
 } from 'lucide-react';
 import type { 
   TestFile, BaselineProfile, BaselineEvaluationResponse 
 } from '../../types/baseline';
+import { Button, KpiCard, HelpPopover } from '../ui';
+import { exportToCsv, SENSORLENS_CHART_THEME } from '../../utils/chartTheme';
 
 interface BaselineEngineViewProps {
   files: TestFile[];
@@ -136,7 +138,7 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
       const refTagged = files.filter(f => f.tag === 'reference').map(f => f.id);
       setSelectedWorkspaceRefIds(refTagged.length > 0 ? refTagged : [files[0].id]);
     }
-  }, [files]);
+  }, [files, selectedWorkspaceRefIds.length]);
 
   useEffect(() => {
     if (availableColumns.length > 0 && !availableColumns.includes(targetCol)) {
@@ -144,7 +146,7 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
       const timeOrProgress = availableColumns.find(c => /time|cycle|step|progress/i.test(c));
       setTargetCol(fmc || timeOrProgress || availableColumns[0]);
     }
-  }, [availableColumns]);
+  }, [availableColumns, targetCol]);
 
   // Synchronize state changes to sessionStorage
   useEffect(() => {
@@ -506,8 +508,15 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
                 name: `Violations (${runEval.test_file_name})`,
                 type: 'scatter',
                 data: violatingPoints,
-                symbolSize: 6,
-                itemStyle: { color: '#ef4444', shadowColor: '#ef4444', shadowBlur: 6 },
+                symbol: 'diamond',
+                symbolSize: 8,
+                itemStyle: { 
+                  color: '#f43f5e', 
+                  borderColor: '#ffffff',
+                  borderWidth: 1.5,
+                  shadowColor: 'rgba(244, 63, 94, 0.8)', 
+                  shadowBlur: 8 
+                },
                 emphasis: { focus: 'series' }
               });
             }
@@ -537,8 +546,15 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
               name: 'Corridor Violations',
               type: 'scatter',
               data: violatingPoints,
-              symbolSize: 6,
-              itemStyle: { color: '#ef4444', shadowColor: '#ef4444', shadowBlur: 8 },
+              symbol: 'diamond',
+              symbolSize: 8,
+              itemStyle: { 
+                color: '#f43f5e', 
+                borderColor: '#ffffff',
+                borderWidth: 1.5,
+                shadowColor: 'rgba(244, 63, 94, 0.8)', 
+                shadowBlur: 8 
+              },
               emphasis: { focus: 'series' }
             });
           }
@@ -585,7 +601,7 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
                 emphasis: { focus: 'series' }
               });
 
-              // Red scatter points for violations
+              // Diamond scatter points for violations
               const violatingPoints = chEval.test_values
                 .map((val, idx) => chEval.violating_mask[idx] ? [grid[idx], val] : null)
                 .filter(Boolean);
@@ -595,8 +611,15 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
                   name: `Violations (${chName})`,
                   type: 'scatter',
                   data: violatingPoints,
-                  symbolSize: 5,
-                  itemStyle: { color: '#ef4444' },
+                  symbol: 'diamond',
+                  symbolSize: 8,
+                  itemStyle: { 
+                    color: '#f43f5e', 
+                    borderColor: '#ffffff',
+                    borderWidth: 1.5,
+                    shadowColor: 'rgba(244, 63, 94, 0.8)', 
+                    shadowBlur: 8 
+                  },
                   emphasis: { focus: 'series' }
                 });
               }
@@ -624,8 +647,15 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
                 name: `Violations (${chName})`,
                 type: 'scatter',
                 data: violatingPoints,
-                symbolSize: 5,
-                itemStyle: { color: '#ef4444' },
+                symbol: 'diamond',
+                symbolSize: 8,
+                itemStyle: { 
+                  color: '#f43f5e', 
+                  borderColor: '#ffffff',
+                  borderWidth: 1.5,
+                  shadowColor: 'rgba(244, 63, 94, 0.8)', 
+                  shadowBlur: 8 
+                },
                 emphasis: { focus: 'series' }
               });
             }
@@ -635,16 +665,20 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
     }
 
     return {
-      backgroundColor: 'transparent',
+      ...SENSORLENS_CHART_THEME,
       tooltip: {
+        ...SENSORLENS_CHART_THEME.tooltip,
         trigger: 'axis',
-        axisPointer: { type: 'cross' }
+        axisPointer: { 
+          type: 'cross',
+          lineStyle: { color: '#00f2fe', type: 'dashed', width: 1 }
+        }
       },
       legend: {
         data: seriesList.filter(s => s.name !== 'Lower Corridor Base').map(s => s.name),
-        textStyle: { color: '#ccc', fontSize: 11 },
+        textStyle: { color: '#cbd5e1', fontSize: 12 },
         type: 'scroll',
-        top: 0
+        top: 4
       },
       toolbox: {
         feature: {
@@ -657,7 +691,7 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
         },
         iconStyle: { borderColor: '#00f2fe' },
         right: '4%',
-        top: 0
+        top: 2
       },
       grid: { left: '4%', right: '5%', bottom: '15%', top: '15%', containLabel: true },
       dataZoom: [
@@ -665,7 +699,7 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
           type: 'slider',
           show: true,
           xAxisIndex: 0,
-          textStyle: { color: '#aaa' },
+          textStyle: { color: '#94a3b8', fontSize: 11 },
           bottom: '2%',
           borderColor: 'rgba(255, 255, 255, 0.1)',
           fillerColor: 'rgba(0, 242, 254, 0.15)',
@@ -678,7 +712,7 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
           yAxisIndex: 0,
           right: '1%',
           width: 18,
-          textStyle: { color: '#aaa' },
+          textStyle: { color: '#94a3b8', fontSize: 11 },
           borderColor: 'rgba(255, 255, 255, 0.1)',
           fillerColor: 'rgba(99, 102, 241, 0.2)',
           handleStyle: { color: '#818cf8' }
@@ -686,19 +720,21 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
         { type: 'inside', yAxisIndex: 0 }
       ],
       xAxis: {
+        ...SENSORLENS_CHART_THEME.xAxis,
         type: 'value',
-        name: `Progress (${targetCol})`,
+        name: `Cycle Progress (${targetCol}) [%]`,
         nameLocation: 'middle',
         nameGap: 30,
-        axisLabel: { color: '#aaa' },
-        splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.05)' } },
+        nameTextStyle: { color: '#94a3b8', fontSize: 12 },
+        axisLabel: { color: '#94a3b8', fontSize: 12, fontFamily: 'JetBrains Mono, monospace' },
         inverse: direction === 'downward'
       },
       yAxis: {
+        ...SENSORLENS_CHART_THEME.yAxis,
         type: 'value',
-        name: 'Sensor Amplitude',
-        axisLabel: { color: '#aaa' },
-        splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.05)' } }
+        name: `${selectedEvalChannel || 'Sensor'} [Amplitude]`,
+        nameTextStyle: { color: '#94a3b8', fontSize: 12 },
+        axisLabel: { color: '#94a3b8', fontSize: 12, fontFamily: 'JetBrains Mono, monospace' },
       },
       series: seriesList
     };
@@ -707,6 +743,42 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
   const currentEvalMetrics = evaluationResult?.channel_evaluations?.[selectedEvalChannel];
   const isMultiSensor = selectedEvalChannels.length > 1;
   const isBatchMode = Boolean(evaluationResult?.is_batch && evaluationResult?.runs_summary && evaluationResult.runs_summary.length > 0);
+
+  const handleExportBaselineCsv = () => {
+    if (!baselineProfile) return;
+    const grid = baselineProfile.grid;
+    const primaryCh = selectedEvalChannel;
+    const chData = baselineProfile.baseline_channels[primaryCh];
+    if (!chData) return;
+
+    const headers = ['Progress_Grid_Pct', `${primaryCh}_Mean`, `${primaryCh}_Upper_kSigma`, `${primaryCh}_Lower_kSigma`];
+    if (currentEvalMetrics) {
+      headers.push(`${primaryCh}_Test_Value`, 'Violation_Flag');
+    }
+
+    const rows: (string | number)[][] = grid.map((pct: number, idx: number) => {
+      const meanVal = chData.mean[idx] ?? 0;
+      const stdVal = chData.std[idx] ?? 0;
+      const upperVal = currentEvalMetrics?.upper_corridor[idx] ?? (meanVal + kSigma * stdVal);
+      const lowerVal = currentEvalMetrics?.lower_corridor[idx] ?? (meanVal - kSigma * stdVal);
+
+      const row: (string | number)[] = [
+        pct,
+        meanVal,
+        upperVal,
+        lowerVal,
+      ];
+      if (currentEvalMetrics) {
+        row.push(
+          currentEvalMetrics.test_values[idx] ?? '',
+          currentEvalMetrics.violating_mask[idx] ? 1 : 0
+        );
+      }
+      return row;
+    });
+
+    exportToCsv(`${primaryCh}_baseline_corridor`, headers, rows);
+  };
 
   return (
     <div className="baseline-workbench">
@@ -1185,6 +1257,17 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
               </div>
             )}
 
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleExportBaselineCsv}
+              disabled={!baselineProfile}
+              title="Export baseline corridor and test evaluation to CSV"
+            >
+              <Download size={12} />
+              <span>Export CSV</span>
+            </Button>
+
             <button onClick={() => setShowGuide(true)} className="btn-guide-toggle">
               <Lightbulb size={13} />
               <span>Concept Guide</span>
@@ -1193,9 +1276,44 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
         </div>
 
         {/* Stage Canvas Area */}
-        <div className="baseline-stage-body">
+        <div className="baseline-stage-body" style={{ display: 'flex', flexDirection: 'column' }}>
           {baselineProfile && baselineProfile.success ? (
-            <div className="baseline-chart-wrapper">
+            <>
+              {/* KPI Cards Row above chart */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '8px', padding: '10px 14px 0 14px' }}>
+                <KpiCard
+                  title="Corridor Violation %"
+                  value={currentEvalMetrics ? `${currentEvalMetrics.violation_pct}%` : '0%'}
+                  status={!currentEvalMetrics ? 'normal' : currentEvalMetrics.violation_pct === 0 ? 'success' : currentEvalMetrics.violation_pct < 5 ? 'warning' : 'danger'}
+                  delta={currentEvalMetrics ? {
+                    value: `${currentEvalMetrics.violation_pct}%`,
+                    isPositiveGood: false,
+                    label: 'out-of-bounds'
+                  } : undefined}
+                  subtitle={currentEvalMetrics ? (currentEvalMetrics.violation_pct === 0 ? 'Zero defects' : `${currentEvalMetrics.violation_pct}% deviation`) : 'Awaiting test evaluation'}
+                />
+                <KpiCard
+                  title="Cumulative Deviation (CAD)"
+                  value={currentEvalMetrics ? currentEvalMetrics.cumulative_deviation.toFixed(1) : '0.0'}
+                  status={!currentEvalMetrics ? 'normal' : currentEvalMetrics.cumulative_deviation > 50 ? 'danger' : 'normal'}
+                  subtitle="Excess integral error"
+                />
+                <KpiCard
+                  title="Trend Correlation"
+                  value={currentEvalMetrics ? `${(currentEvalMetrics.slope_correlation * 100).toFixed(0)}%` : '100%'}
+                  status={!currentEvalMetrics ? 'normal' : currentEvalMetrics.slope_correlation >= 0.8 ? 'success' : 'warning'}
+                  icon={<HelpPopover topic="pearson" />}
+                  subtitle="Trajectory shape match"
+                />
+                <KpiCard
+                  title="Tolerance Band"
+                  value={`±${kSigma}σ`}
+                  icon={<HelpPopover topic="baseline_corridor" />}
+                  subtitle={pctMargin > 0 ? `+${pctMargin}% margin` : 'Gaussian envelope'}
+                />
+              </div>
+
+              <div className="baseline-chart-wrapper" style={{ flex: 1, minHeight: 0 }}>
               <ReactECharts 
                 ref={echartsRef}
                 option={getCorridorChartOption()}
@@ -1205,6 +1323,7 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
                 theme="dark"
               />
             </div>
+          </>
           ) : (
             <div className="baseline-empty-hero">
               <BarChart2 size={54} className="text-accent-cyan" style={{ opacity: 0.8 }} />

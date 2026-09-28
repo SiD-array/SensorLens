@@ -2342,7 +2342,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
                 </div>
                 <span className="target-badge-pill">INDICATOR</span>
               </div>
-              <p style={{ fontSize: '0.74rem', color: '#94a3b8', margin: '2px 0 6px 0' }}>
+              <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)', margin: '2px 0 6px 0' }}>
                 Select sensor indicating component wear, thermal stress, or degradation.
               </p>
               <select
@@ -2384,7 +2384,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
                 </button>
               </div>
 
-              <label className="field-label" style={{ fontSize: '0.76rem', fontWeight: 600, color: '#cbd5e1', marginBottom: '4px', display: 'block' }}>
+              <label className="field-label" style={{ fontSize: '0.76rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px', display: 'block' }}>
                 Failure Boundary Threshold
               </label>
               <input
@@ -2451,14 +2451,14 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
                 <div className="rul-kpi-label">
                   <Clock size={14} /> Remaining Useful Life
                 </div>
-                <div className="rul-kpi-value" style={{ color: rulResult ? (rulResult.operating_state === 'CRITICAL' ? '#f43f5e' : rulResult.operating_state === 'WARNING' ? '#fbbf24' : '#34d399') : '#94a3b8' }}>
+                <div className="rul-kpi-value" style={{ color: rulResult ? (rulResult.operating_state === 'CRITICAL' ? '#f43f5e' : rulResult.operating_state === 'WARNING' ? '#fbbf24' : '#34d399') : 'var(--text-muted)' }}>
                   {rulResult ? (rulResult.rul_samples !== null ? `${Math.round(rulResult.rul_samples)}` : rulResult.rul_str) : '--'}
-                  <span style={{ fontSize: '0.85rem', fontWeight: 500, marginLeft: '6px', color: '#94a3b8' }}>
+                  <span style={{ fontSize: '0.85rem', fontWeight: 500, marginLeft: '6px', color: 'var(--text-muted)' }}>
                     {rulResult?.rul_samples !== null ? 'cycles / pts' : ''}
                   </span>
                 </div>
                 {rulResult && (
-                  <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
                     {rulResult.rul_samples !== null 
                       ? `Expected failure at cycle #${Math.round(rulResult.historical.length + rulResult.rul_samples)}`
                       : rulResult.rul_str}
@@ -2470,7 +2470,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
                 <div className="rul-kpi-label">
                   <Gauge size={14} /> Current Health Index
                 </div>
-                <div className="rul-kpi-value" style={{ color: rulResult ? (rulResult.health_index_pct > 60 ? '#34d399' : rulResult.health_index_pct > 30 ? '#fbbf24' : '#f43f5e') : '#94a3b8' }}>
+                <div className="rul-kpi-value" style={{ color: rulResult ? (rulResult.health_index_pct > 60 ? '#34d399' : rulResult.health_index_pct > 30 ? '#fbbf24' : '#f43f5e') : 'var(--text-muted)' }}>
                   {rulResult ? `${rulResult.health_index_pct.toFixed(1)}%` : '--'}
                 </div>
                 {rulResult && (
@@ -2488,7 +2488,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
                   {rulResult ? rulResult.current_val.toFixed(2) : '--'}
                 </div>
                 {rulResult && (
-                  <div style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
                     Limit: {rulResult.threshold.toFixed(2)} (Margin: {Math.abs(rulResult.threshold - rulResult.current_val).toFixed(2)})
                   </div>
                 )}
@@ -2498,11 +2498,11 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
                 <div className="rul-kpi-label">
                   <Sliders size={14} /> Model & Drift Velocity
                 </div>
-                <div className="rul-kpi-value" style={{ fontSize: '1.05rem', color: '#00f2fe' }}>
+                <div className="rul-kpi-value" style={{ fontSize: '1.05rem', color: 'var(--accent-cyan)' }}>
                   {rulResult ? rulResult.model_used.toUpperCase() : '--'}
                 </div>
                 {rulResult && (
-                  <div style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
                     Rate: {rulResult.degradation_rate_100.toFixed(2)} units / 100 cycles
                   </div>
                 )}
@@ -2517,8 +2517,8 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
                   <span>Degradation Curve & Forward Prognostic Horizon</span>
                 </div>
                 {rulResult && (
-                  <div style={{ display: 'flex', gap: '14px', fontSize: '0.75rem', color: '#94a3b8', flexWrap: 'wrap' }}>
-                    <span><b style={{ color: '#00f2fe' }}>● Cyan</b>: Observed Telemetry</span>
+                  <div style={{ display: 'flex', gap: '14px', fontSize: '0.75rem', color: 'var(--text-secondary)', flexWrap: 'wrap' }}>
+                    <span><b style={{ color: 'var(--accent-cyan)' }}>● Cyan</b>: Observed Telemetry</span>
                     <span><b style={{ color: '#818cf8' }}>┄ Purple</b>: Fitted Baseline</span>
                     <span><b style={{ color: '#fbbf24' }}>--- Gold</b>: Extrapolated Horizon</span>
                     <span><b style={{ color: '#f43f5e' }}>--- Red</b>: Failure Threshold ({rulResult.threshold})</span>

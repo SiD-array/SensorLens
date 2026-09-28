@@ -1,0 +1,251 @@
+/* ==========================================================================
+   DESIGN TOKENS — SENSORLENS DESIGN SYSTEM
+   ========================================================================== */
+
+:root {
+  /* -------------------------------------------------------------
+     1. COLOR SYSTEM (Tailored Dark Theme + Cyan/Blue Accents)
+     ------------------------------------------------------------- */
+  /* Canvas & Backgrounds */
+  --bg-primary: #07090e;
+  --bg-secondary: #0d111a;
+  --bg-surface: #131926;
+  --bg-surface-hover: #1a2234;
+  --bg-elevated: #1f293d;
+  --bg-card: rgba(19, 25, 38, 0.72);
+  --bg-card-hover: rgba(26, 34, 52, 0.88);
+  --bg-glass: rgba(13, 17, 26, 0.75);
+  --bg-glass-elevated: rgba(22, 30, 46, 0.85);
+  --bg-overlay: rgba(3, 6, 12, 0.82);
+
+  /* Surface and Input tokens */
+  --surface-card: rgba(19, 25, 38, 0.72);
+  --surface-card-hover: rgba(26, 34, 52, 0.88);
+  --surface-panel: rgba(13, 17, 26, 0.75);
+  --surface-input: rgba(0, 0, 0, 0.35);
+  --surface-input-focus: rgba(0, 0, 0, 0.5);
+
+  /* Borders & Dividers */
+  --border-subtle: rgba(255, 255, 255, 0.05);
+  --border-color: rgba(255, 255, 255, 0.09);
+  --border-color-hover: rgba(255, 255, 255, 0.18);
+  --border-strong: rgba(255, 255, 255, 0.28);
+  --border-accent: rgba(0, 242, 254, 0.35);
+
+  /* Typography Colors */
+  --text-primary: #f8fafc;
+  --text-secondary: #cbd5e1;
+  --text-muted: #64748b;
+  --text-disabled: #475569;
+  --text-inverse: #020617;
+
+  /* Primary Brand Accents */
+  --accent-cyan: #00f2fe;
+  --accent-cyan-rgb: 0, 242, 254;
+  --accent-cyan-hover: #38bdf8;
+  --accent-blue: #3b82f6;
+  --accent-blue-rgb: 59, 130, 246;
+  --accent-indigo: #818cf8;
+  --accent-purple: #a855f7;
+
+  /* Semantic State Colors */
+  /* Success / Match */
+  --color-success: #10b981;
+  --color-success-bg: rgba(16, 185, 129, 0.12);
+  --color-success-border: rgba(16, 185, 129, 0.32);
+  --color-success-text: #34d399;
+  --color-success-hover: rgba(16, 185, 129, 0.22);
+
+  /* Warning / Review */
+  --color-warning: #f59e0b;
+  --color-warning-bg: rgba(245, 158, 11, 0.12);
+  --color-warning-border: rgba(245, 158, 11, 0.32);
+  --color-warning-text: #fbbf24;
+  --color-warning-hover: rgba(245, 158, 11, 0.22);
+
+  /* Danger / Error / Rejection */
+  --color-danger: #f43f5e;
+  --color-danger-bg: rgba(244, 63, 94, 0.12);
+  --color-danger-border: rgba(244, 63, 94, 0.32);
+  --color-danger-text: #fda4af;
+  --color-danger-hover: rgba(244, 63, 94, 0.22);
+
+  /* Info / Discovery */
+  --color-info: #0ea5e9;
+  --color-info-bg: rgba(14, 165, 233, 0.12);
+  --color-info-border: rgba(14, 165, 233, 0.32);
+  --color-info-text: #38bdf8;
+  --color-info-hover: rgba(14, 165, 233, 0.22);
+
+  /* Tag Color Mappings (Backward compatible) */
+  --tag-useful-bg: var(--color-success-bg);
+  --tag-useful-border: var(--color-success-border);
+  --tag-useful-text: var(--color-success-text);
+
+  --tag-review-bg: var(--color-warning-bg);
+  --tag-review-border: var(--color-warning-border);
+  --tag-review-text: var(--color-warning-text);
+
+  --tag-ref-bg: rgba(99, 102, 241, 0.14);
+  --tag-ref-border: rgba(99, 102, 241, 0.35);
+  --tag-ref-text: #818cf8;
+
+  --tag-archive-bg: rgba(100, 116, 139, 0.14);
+  --tag-archive-border: rgba(100, 116, 139, 0.3);
+  --tag-archive-text: #94a3b8;
+
+  /* -------------------------------------------------------------
+     2. SPACING SYSTEM (4px / 8px Grid Base)
+     ------------------------------------------------------------- */
+  --space-0: 0px;
+  --space-0-5: 2px;
+  --space-1: 4px;
+  --space-1-5: 6px;
+  --space-2: 8px;
+  --space-2-5: 10px;
+  --space-3: 12px;
+  --space-3-5: 14px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* -------------------------------------------------------------
+     3. TYPOGRAPHY SCALE & WEIGHTS
+     ------------------------------------------------------------- */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-display: 'Outfit', 'Inter', sans-serif;
+
+  --text-2xs: 0.65rem;   /* ~10.4px */
+  --text-xs: 0.72rem;    /* ~11.5px */
+  --text-sm: 0.8rem;     /* ~12.8px */
+  --text-base: 0.88rem;  /* ~14px */
+  --text-md: 0.95rem;    /* ~15.2px */
+  --text-lg: 1.1rem;     /* ~17.6px */
+  --text-xl: 1.25rem;    /* ~20px */
+  --text-2xl: 1.5rem;    /* ~24px */
+  --text-3xl: 1.85rem;   /* ~29.6px */
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+  --weight-black: 800;
+
+  --leading-none: 1;
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.625;
+
+  /* -------------------------------------------------------------
+     4. BORDER RADII
+     ------------------------------------------------------------- */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+  --radius-full: 9999px;
+
+  /* -------------------------------------------------------------
+     5. SHADOWS & GLOWS
+     ------------------------------------------------------------- */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 10px 28px rgba(0, 0, 0, 0.65);
+  --shadow-xl: 0 20px 48px rgba(0, 0, 0, 0.8);
+  --shadow-glass: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+  --shadow-cyan-glow: 0 0 20px rgba(0, 242, 254, 0.22);
+  --shadow-blue-glow: 0 0 20px rgba(59, 130, 246, 0.25);
+  --shadow-success-glow: 0 0 20px rgba(16, 185, 129, 0.25);
+  --shadow-danger-glow: 0 0 20px rgba(244, 63, 94, 0.25);
+
+  /* -------------------------------------------------------------
+     6. MOTION & TRANSITIONS
+     ------------------------------------------------------------- */
+  --duration-instant: 75ms;
+  --duration-fast: 150ms;
+  --duration-normal: 220ms;
+  --duration-slow: 350ms;
+
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-spring: cubic-bezier(0.175, 0.885, 0.32, 1.15);
+
+  /* -------------------------------------------------------------
+     7. Z-INDEX LAYERS
+     ------------------------------------------------------------- */
+  --z-base: 1;
+  --z-dropdown: 50;
+  --z-sticky: 100;
+  --z-drawer: 200;
+  --z-modal-backdrop: 1000;
+  --z-modal: 1050;
+  --z-popover: 1100;
+  --z-toast: 1200;
+  --z-tooltip: 1300;
+
+  /* -------------------------------------------------------------
+     8. LAYOUT SIZES
+     ------------------------------------------------------------- */
+  --sidebar-width-expanded: 240px;
+  --sidebar-width-collapsed: 64px;
+  --header-height: 56px;
+  --stepper-height: 40px;
+}
+
+/* ==========================================================================
+   LIGHT THEME OVERRIDES (WCAG 2.2 AA Compliant)
+   ========================================================================== */
+[data-theme="light"] {
+  --bg-primary: #f8fafc;
+  --bg-secondary: #f1f5f9;
+  --bg-surface: #ffffff;
+  --bg-surface-hover: #f8fafc;
+  --bg-elevated: #ffffff;
+  --bg-card: rgba(255, 255, 255, 0.88);
+  --bg-card-hover: rgba(255, 255, 255, 0.98);
+  --bg-glass: rgba(255, 255, 255, 0.82);
+  --bg-glass-elevated: rgba(255, 255, 255, 0.95);
+  --bg-overlay: rgba(15, 23, 42, 0.55);
+
+  /* Surface and Input tokens (Light) */
+  --surface-card: #ffffff;
+  --surface-card-hover: #f8fafc;
+  --surface-panel: #f1f5f9;
+  --surface-input: #ffffff;
+  --surface-input-focus: #ffffff;
+
+  --border-subtle: rgba(0, 0, 0, 0.06);
+  --border-color: rgba(0, 0, 0, 0.12);
+  --border-color-hover: rgba(0, 0, 0, 0.22);
+  --border-strong: rgba(0, 0, 0, 0.35);
+  --border-accent: rgba(2, 132, 199, 0.45);
+
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
+  --text-disabled: #94a3b8;
+  --text-inverse: #ffffff;
+
+  --accent-cyan: #0284c7;
+  --accent-cyan-rgb: 2, 132, 199;
+  --accent-cyan-hover: #0369a1;
+  --accent-blue: #2563eb;
+  --accent-blue-rgb: 37, 99, 235;
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 10px 28px rgba(0, 0, 0, 0.14);
+  --shadow-xl: 0 20px 48px rgba(0, 0, 0, 0.18);
+  --shadow-glass: 0 8px 32px 0 rgba(0, 0, 0, 0.06);
+  --shadow-cyan-glow: 0 0 16px rgba(2, 132, 199, 0.2);
+  --shadow-blue-glow: 0 0 16px rgba(37, 99, 235, 0.2);
+}

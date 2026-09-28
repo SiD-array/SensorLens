@@ -8,6 +8,8 @@ import type { SensorBucket, SensorBucketMap } from './bucketUtils';
 import { 
   PRESET_COLORS, DEFAULT_BUCKETS, resolveSensorBucket 
 } from './bucketUtils';
+import { useToast } from '../ui/Toast';
+import { ConfirmDialog } from '../ui/ConfirmDialog';
 
 interface BucketManagerModalProps {
   isOpen: boolean;
@@ -28,6 +30,7 @@ export const BucketManagerModal: React.FC<BucketManagerModalProps> = ({
   onUpdateBucketMap,
   availableSensorNames
 }) => {
+  const toast = useToast();
   const safeBuckets = useMemo(() => {
     return (buckets && buckets.length > 0) ? buckets : DEFAULT_BUCKETS;
   }, [buckets]);
@@ -36,6 +39,7 @@ export const BucketManagerModal: React.FC<BucketManagerModalProps> = ({
   const [newBucketName, setNewBucketName] = useState('');
   const [newBucketColor, setNewBucketColor] = useState(PRESET_COLORS[0]);
   const [isCreating, setIsCreating] = useState(false);
+  const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
 
   // Search filter for sensor assigner on the right
   const [sensorSearchQuery, setSensorSearchQuery] = useState('');
@@ -95,7 +99,7 @@ export const BucketManagerModal: React.FC<BucketManagerModalProps> = ({
   // Delete bucket (default or custom)
   const handleDeleteBucket = (id: string) => {
     if (buckets.length <= 1) {
-      alert("Cannot delete the last remaining category. At least one category must be kept.");
+      toast.error("Cannot delete the last remaining category. At least one category must be kept.", "Category Protection");
       return;
     }
 
@@ -117,6 +121,7 @@ export const BucketManagerModal: React.FC<BucketManagerModalProps> = ({
     onUpdateBuckets(updatedBuckets);
     onUpdateBucketMap(updatedMap);
     setSelectedBucketId(fallbackBucketId || 'cat_general');
+    toast.info("Category removed and sensors reassigned.");
   };
 
   // Rename bucket
@@ -163,11 +168,15 @@ export const BucketManagerModal: React.FC<BucketManagerModalProps> = ({
 
   // Reset to default configuration
   const handleResetToDefaults = () => {
-    if (window.confirm('Reset all buckets and sensor assignments back to factory defaults?')) {
-      onUpdateBuckets(DEFAULT_BUCKETS);
-      onUpdateBucketMap({});
-      setSelectedBucketId('cat_temp');
-    }
+    setIsResetConfirmOpen(true);
+  };
+
+  const handleConfirmReset = () => {
+    onUpdateBuckets(DEFAULT_BUCKETS);
+    onUpdateBucketMap({});
+    setSelectedBucketId('cat_temp');
+    setIsResetConfirmOpen(false);
+    toast.success("Categories reset back to factory defaults.");
   };
 
   const toggleCheckSensor = (name: string) => {
@@ -498,7 +507,18 @@ export const BucketManagerModal: React.FC<BucketManagerModalProps> = ({
         </div>
 
       </div>
+
+      <ConfirmDialog
+        isOpen={isResetConfirmOpen}
+        title="Reset Categories to Defaults?"
+        message="Resetting will restore factory categories and clear custom sensor category assignments. This action cannot be undone."
+        confirmLabel="Reset Defaults"
+        isDestructive={true}
+        onConfirm={handleConfirmReset}
+        onCancel={() => setIsResetConfirmOpen(false)}
+      />
     </div>,
     document.body
   );
 };
+

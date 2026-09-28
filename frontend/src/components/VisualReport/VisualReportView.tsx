@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import ReactECharts from 'echarts-for-react';
-import { Activity, Sparkles, SlidersHorizontal, Info } from 'lucide-react';
+import { Activity, Sparkles, SlidersHorizontal, Info, Download } from 'lucide-react';
 import type { TestFile } from '../../types/baseline';
 import { SensorSelector } from './SensorSelector';
 import type { SelectedPlotCol } from './SensorSelector';
 import { PlottedChannelBadges, getChannelColor } from './PlottedChannelBadges';
+import { Button, KpiCard } from '../ui';
+import { exportToCsv, SENSORLENS_CHART_THEME } from '../../utils/chartTheme';
 
 interface VisualReportViewProps {
   files: TestFile[];
@@ -18,6 +20,65 @@ export const VisualReportView: React.FC<VisualReportViewProps> = ({
   onChangeSelectedPlotCols
 }) => {
   const [chartType, setChartType] = useState<'line' | 'scatter' | 'bar'>('line');
+
+  // Compute summary metrics across plotted channels
+  const summaryMetrics = useMemo(() => {
+    if (selectedPlotCols.length === 0) return null;
+    let maxMean = -Infinity;
+    let maxMeanCol = '';
+    let globalMin = Infinity;
+    let globalMax = -Infinity;
+    let totalPoints = 0;
+
+    selectedPlotCols.forEach(sel => {
+      const file = files.find(f => f.id === sel.fileId);
+      const col = file?.columns.find(c => c.name === sel.colName);
+      if (col) {
+        if (col.mean > maxMean) {
+          maxMean = col.mean;
+          maxMeanCol = col.name;
+        }
+        if (col.min < globalMin) globalMin = col.min;
+        if (col.max > globalMax) globalMax = col.max;
+        totalPoints = Math.max(totalPoints, col.sparkline.length);
+      }
+    });
+
+    return {
+      activeCount: selectedPlotCols.length,
+      maxMean: maxMean !== -Infinity ? maxMean.toFixed(1) : '—',
+      maxMeanCol,
+      range: globalMax !== -Infinity && globalMin !== Infinity ? `${globalMin.toFixed(0)} → ${globalMax.toFixed(0)}` : '—',
+      totalPoints,
+    };
+  }, [selectedPlotCols, files]);
+
+  // Export plotted data to CSV
+  const handleExportCsv = () => {
+    if (selectedPlotCols.length === 0) return;
+    const maxPts = Math.max(
+      ...selectedPlotCols.map(sel => {
+        const file = files.find(f => f.id === sel.fileId);
+        const col = file?.columns.find(c => c.name === sel.colName);
+        return col?.sparkline.length || 0;
+      })
+    );
+
+    const headers = ['Time_Step', ...selectedPlotCols.map(s => `${s.fileName || s.fileId}_${s.colName}`)];
+    const rows: (string | number)[][] = [];
+
+    for (let i = 0; i < maxPts; i++) {
+      const row: (string | number)[] = [i];
+      selectedPlotCols.forEach(sel => {
+        const file = files.find(f => f.id === sel.fileId);
+        const col = file?.columns.find(c => c.name === sel.colName);
+        row.push(col?.sparkline[i] !== undefined ? col.sparkline[i] : '');
+      });
+      rows.push(row);
+    }
+
+    exportToCsv('visual_report_sensor_telemetry', headers, rows);
+  };
 
   // Remove single badge
   const handleRemoveBadge = (fileId: string, colName: string) => {
@@ -97,14 +158,15 @@ export const VisualReportView: React.FC<VisualReportViewProps> = ({
     });
 
     return {
-      backgroundColor: 'transparent',
+      ...SENSORLENS_CHART_THEME,
       tooltip: {
+        ...SENSORLENS_CHART_THEME.tooltip,
         trigger: 'axis',
-        axisPointer: { type: 'cross' }
+        axisPointer: { type: 'cross', lineStyle: { color: '#00f2fe', type: 'dashed' } }
       },
       legend: {
         data: legendNames,
-        textStyle: { color: '#ccc' },
+        textStyle: { color: '#cbd5e1', fontSize: 12 },
         selectedMode: true,
         type: 'scroll',
         top: 4
@@ -119,7 +181,7 @@ export const VisualReportView: React.FC<VisualReportViewProps> = ({
           restore: { title: 'Reset View' }
         },
         iconStyle: { borderColor: '#00f2fe' },
-        right: '5%',
+        right: '4%',
         top: 4
       },
       grid: { left: '4%', right: '5%', bottom: '14%', top: '16%', containLabel: true },
@@ -128,7 +190,7 @@ export const VisualReportView: React.FC<VisualReportViewProps> = ({
           type: 'slider',
           show: true,
           xAxisIndex: 0,
-          textStyle: { color: '#aaa' },
+          textStyle: { color: '#94a3b8', fontSize: 11 },
           bottom: '2%',
           borderColor: 'rgba(255, 255, 255, 0.1)',
           fillerColor: 'rgba(0, 242, 254, 0.15)',
@@ -141,7 +203,7 @@ export const VisualReportView: React.FC<VisualReportViewProps> = ({
           yAxisIndex: 0,
           right: '1%',
           width: 18,
-          textStyle: { color: '#aaa' },
+          textStyle: { color: '#94a3b8', fontSize: 11 },
           borderColor: 'rgba(255, 255, 255, 0.1)',
           fillerColor: 'rgba(99, 102, 241, 0.2)',
           handleStyle: { color: '#818cf8' }
@@ -149,16 +211,18 @@ export const VisualReportView: React.FC<VisualReportViewProps> = ({
         { type: 'inside', yAxisIndex: 0 }
       ],
       xAxis: {
+        ...SENSORLENS_CHART_THEME.xAxis,
         type: 'value',
-        name: 'Time Index',
-        axisLabel: { color: '#aaa' },
-        splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.05)' } }
+        name: 'Sample Index [Steps]',
+        nameTextStyle: { color: '#94a3b8', fontSize: 12 },
+        axisLabel: { color: '#94a3b8', fontSize: 12, fontFamily: 'JetBrains Mono, monospace' },
       },
       yAxis: {
+        ...SENSORLENS_CHART_THEME.yAxis,
         type: 'value',
-        name: 'Sensor Reading',
-        axisLabel: { color: '#aaa' },
-        splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.05)' } }
+        name: 'Sensor Reading [Units]',
+        nameTextStyle: { color: '#94a3b8', fontSize: 12 },
+        axisLabel: { color: '#94a3b8', fontSize: 12, fontFamily: 'JetBrains Mono, monospace' },
       },
       series: seriesList
     };
@@ -187,7 +251,7 @@ export const VisualReportView: React.FC<VisualReportViewProps> = ({
       </aside>
 
       {/* Right Main Stage: Plotted Badges & Full-Height Chart */}
-      <main className="workbench-main glass-panel">
+      <main className="workbench-main glass-panel" style={{ display: 'flex', flexDirection: 'column' }}>
         {/* Stage Header Toolbar */}
         <div className="stage-toolbar">
           <div className="stage-badges-container">
@@ -206,6 +270,17 @@ export const VisualReportView: React.FC<VisualReportViewProps> = ({
           </div>
 
           <div className="stage-controls-group">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleExportCsv}
+              disabled={selectedPlotCols.length === 0}
+              title="Export plotted sensor channels to CSV"
+            >
+              <Download size={12} />
+              <span>Export CSV</span>
+            </Button>
+
             <div className="graph-type-selector">
               {(['line', 'scatter', 'bar'] as const).map(t => (
                 <button 
@@ -220,8 +295,36 @@ export const VisualReportView: React.FC<VisualReportViewProps> = ({
           </div>
         </div>
 
+        {/* KPI Cards Row above visualizer canvas */}
+        {summaryMetrics && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '8px', padding: '10px 16px 0 16px' }}>
+            <KpiCard
+              title="Active Traces"
+              value={summaryMetrics.activeCount}
+              subtitle="Overlay channels"
+              status="info"
+            />
+            <KpiCard
+              title="Max Channel Mean"
+              value={summaryMetrics.maxMean}
+              subtitle={summaryMetrics.maxMeanCol || 'Peak average'}
+            />
+            <KpiCard
+              title="Dynamic Range"
+              value={summaryMetrics.range}
+              subtitle="Global Min → Max"
+            />
+            <KpiCard
+              title="Sample Depth"
+              value={summaryMetrics.totalPoints.toLocaleString()}
+              unit="pts"
+              subtitle="Max trace length"
+            />
+          </div>
+        )}
+
         {/* Large ECharts Visualizer Canvas */}
-        <div className="workbench-canvas">
+        <div className="workbench-canvas" style={{ flex: 1, minHeight: 0 }}>
           {selectedPlotCols.length > 0 ? (
             <ReactECharts
               option={getEChartsOption()}

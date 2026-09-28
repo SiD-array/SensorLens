@@ -1,15 +1,46 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { 
-  Upload, Settings, Activity, Trash2, Download, 
-  UploadCloud, ThumbsUp, ThumbsDown, Play, Info, 
-  RefreshCw, X, Check, Lightbulb
+  Upload, Activity, Trash2, 
+  ThumbsUp, ThumbsDown, Play, Info, 
+  RefreshCw, X, Check, Lightbulb, Search, 
+  ArrowUpDown, CheckSquare, Square, Download,
+  AlertCircle, ChevronDown, Sliders, Cloud
 } from 'lucide-react';
-import { VisualReportView } from './components/VisualReport/VisualReportView';
-import { ColumnAlignmentView } from './components/ColumnAlignment/ColumnAlignmentView';
-import { BaselineEngineView } from './components/Baseline/BaselineEngineView';
-import { AnalyticsView } from './components/Analytics/AnalyticsView';
+import { useToast } from './components/ui/Toast';
+import { Button, Modal, Skeleton, KpiCard, HelpPopover } from './components/ui';
+import { AppSidebar, AppHeader, CommandPalette } from './components/shell';
+import type { ViewType } from './components/shell';
+import { exportToCsv, SENSORLENS_CHART_THEME } from './utils/chartTheme';
 
+// Code-split sub-views to clear bundle warnings and optimize runtime footprint
+const VisualReportView = React.lazy(() => import('./components/VisualReport/VisualReportView').then(m => ({ default: m.VisualReportView })));
+const ColumnAlignmentView = React.lazy(() => import('./components/ColumnAlignment/ColumnAlignmentView').then(m => ({ default: m.ColumnAlignmentView })));
+const BaselineEngineView = React.lazy(() => import('./components/Baseline/BaselineEngineView').then(m => ({ default: m.BaselineEngineView })));
+const AnalyticsView = React.lazy(() => import('./components/Analytics/AnalyticsView').then(m => ({ default: m.AnalyticsView })));
+
+const ViewLoadingFallback: React.FC = () => (
+  <div style={{ flex: 1, padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }} role="status" aria-label="Loading view">
+    <Skeleton height={42} width="40%" />
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+      <Skeleton height={110} />
+      <Skeleton height={110} />
+      <Skeleton height={110} />
+      <Skeleton height={110} />
+    </div>
+    <Skeleton height={420} />
+  </div>
+);
+
+
+
+const VALID_VIEWS: ViewType[] = ['dashboard', 'visualizer', 'alignment', 'baseline', 'compare', 'analytics'];
+
+const getViewFromHash = (): ViewType => {
+  if (typeof window === 'undefined') return 'dashboard';
+  const hash = window.location.hash.replace('#', '') as ViewType;
+  return VALID_VIEWS.includes(hash) ? hash : 'dashboard';
+};
 
 interface SensorColumn {
   name: string;
@@ -52,10 +83,50 @@ interface SimilarityResult {
 }
 
 export default function App() {
+  const toast = useToast();
+
   // App States
   const [files, setFiles] = useState<TestFile[]>([]);
-  const [activeTestId, setActiveTestId] = useState<string>('');
-  const [activeRefId, setActiveRefId] = useState<string>('');
+  const [activeTestId, setActiveTestId] = useState<string>(() => {
+    try {
+      return localStorage.getItem('sensorlens_active_test_id') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [activeRefId, setActiveRefId] = useState<string>(() => {
+    try {
+      return localStorage.getItem('sensorlens_active_ref_id') || '';
+    } catch {
+      return '';
+    }
+  });
+
+  // Library Search, Sort, Filters, and Bulk Actions
+  const [librarySearch, setLibrarySearch] = useState('');
+  const [librarySort, setLibrarySort] = useState<'name' | 'rows' | 'channels' | 'tag'>(() => {
+    try {
+      return (localStorage.getItem('sensorlens_library_sort') as any) || 'name';
+    } catch {
+      return 'name';
+    }
+  });
+  const [libraryTagFilter, setLibraryTagFilter] = useState<'all' | 'reference' | 'useful' | 'reviewable' | 'archive'>(() => {
+    try {
+      return (localStorage.getItem('sensorlens_library_filter') as any) || 'all';
+    } catch {
+      return 'all';
+    }
+  });
+  const [bulkSelectedIds, setBulkSelectedIds] = useState<string[]>([]);
+  const [isDragOverLibrary, setIsDragOverLibrary] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<Record<string, {
+    name: string;
+    progress: number;
+    status: 'uploading' | 'parsing' | 'done' | 'error';
+    errorMsg?: string;
+    suggestion?: string;
+  }>>({});
   
   // Library Mapping Drag and Drop
   const [mappings, setMappings] = useState<Record<string, string>>({}); // ref_col -> test_col
@@ -67,12 +138,21 @@ export default function App() {
   
   const [selectedPlotCols, setSelectedPlotCols] = useState<Array<{ fileId: string; colName: string; fileName?: string }>>([]);
   
-  // UI Panels / Views
-  const [activeView, setActiveView] = useState<'dashboard' | 'visualizer' | 'alignment' | 'baseline' | 'compare' | 'analytics'>('dashboard');
+  // UI Panels / Views synchronized to URL hash
+  const [activeView, setActiveView] = useState<ViewType>(getViewFromHash);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('sensorlens_sidebar_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [showGuide, setShowGuide] = useState(true);
+  const [showGuide, setShowGuide] = useState(false);
   
   // Settings Config
   const [settings, setSettings] = useState({
@@ -83,8 +163,65 @@ export default function App() {
     oneDrivePath: 'C:\\Users\\sidb9\\OneDrive - BSH\\SensorLensReports',
     apiKey: ''
   });
-  
-  // Settings Config
+
+  // Sync active view to window hash
+  useEffect(() => {
+    const handleHashChange = () => {
+      const v = getViewFromHash();
+      setActiveView(v);
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  // Save selection states across page refresh
+  useEffect(() => {
+    try {
+      if (activeRefId) localStorage.setItem('sensorlens_active_ref_id', activeRefId);
+      else localStorage.removeItem('sensorlens_active_ref_id');
+    } catch {}
+  }, [activeRefId]);
+
+  useEffect(() => {
+    try {
+      if (activeTestId) localStorage.setItem('sensorlens_active_test_id', activeTestId);
+      else localStorage.removeItem('sensorlens_active_test_id');
+    } catch {}
+  }, [activeTestId]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('sensorlens_library_filter', libraryTagFilter);
+    } catch {}
+  }, [libraryTagFilter]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('sensorlens_library_sort', librarySort);
+    } catch {}
+  }, [librarySort]);
+
+  const navigateToView = (view: ViewType) => {
+    setActiveView(view);
+    window.location.hash = view;
+    if (view === 'visualizer' && selectedPlotCols.length === 0 && files.length > 0) {
+      const firstF = files[0];
+      if (firstF && firstF.columns[0]) {
+        setSelectedPlotCols([{ fileId: firstF.id, colName: firstF.columns[0].name, fileName: firstF.name }]);
+      }
+    }
+  };
+
+  const toggleSidebar = () => {
+    setIsSidebarCollapsed(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem('sensorlens_sidebar_collapsed', String(next));
+      } catch {}
+      return next;
+    });
+  };
+
   
   // User feedback on AI reports
   const [feedbacks, setFeedbacks] = useState<Record<string, { verdict: string; comment: string }>>({});
@@ -98,6 +235,7 @@ export default function App() {
   useEffect(() => {
     if (activeRefId && activeTestId) {
       fetchSuggestedMappings();
+
     } else {
       setMappings({});
       setUnmappedPool([]);
@@ -139,37 +277,68 @@ export default function App() {
     }
   };
 
-  // Upload handler
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const filesUploaded = e.target.files;
-    if (!filesUploaded || filesUploaded.length === 0) return;
-    
+  // Reusable multi-file upload with per-file progress and error guidance
+  const handleUploadFilesList = async (filesList: FileList | File[]) => {
+    if (!filesList || filesList.length === 0) return;
     setIsUploading(true);
     const updatedFiles = [...files];
-    
-    for (let i = 0; i < filesUploaded.length; i++) {
-      const file = filesUploaded[i];
+
+    for (let i = 0; i < filesList.length; i++) {
+      const file = filesList[i];
+      const uploadId = `${file.name}-${Date.now()}-${i}`;
+
+      setUploadProgress(prev => ({
+        ...prev,
+        [uploadId]: { name: file.name, progress: 25, status: 'uploading' }
+      }));
+
       const formData = new FormData();
       formData.append('file', file);
-      
+
       try {
+        setUploadProgress(prev => ({
+          ...prev,
+          [uploadId]: { ...prev[uploadId], progress: 60, status: 'parsing' }
+        }));
+
         const response = await fetch('http://localhost:8000/api/upload', {
           method: 'POST',
           body: formData,
         });
+
         if (!response.ok) {
-          const err = await response.json();
-          alert(`Error uploading ${file.name}: ${err.detail}`);
+          const err = await response.json().catch(() => ({ detail: 'Server error parsing file' }));
+          const detail = err.detail || 'Upload or parse failed';
+          let suggestion = 'Verify worksheet contains numeric time-series values with headers in row 1.';
+          const lower = detail.toLowerCase();
+          if (lower.includes('column') || lower.includes('header')) {
+            suggestion = 'Check row 1 headers: ensure names are unique and non-empty.';
+          } else if (lower.includes('empty') || lower.includes('row')) {
+            suggestion = 'Workbook has no sensor data rows under headers.';
+          } else if (lower.includes('format') || lower.includes('type')) {
+            suggestion = 'Ensure file is a valid .xlsx or .xls workbook (not password protected).';
+          }
+
+          setUploadProgress(prev => ({
+            ...prev,
+            [uploadId]: {
+              name: file.name,
+              progress: 100,
+              status: 'error',
+              errorMsg: detail,
+              suggestion
+            }
+          }));
+          toast.error(`Error uploading ${file.name}: ${detail}`, 'Upload Error');
           continue;
         }
+
         const data = await response.json();
-        
-        // Auto-assign tags based on count
         let defaultTag: 'useful' | 'reviewable' | 'reference' | 'archive' = 'useful';
         if (updatedFiles.length === 0) {
           defaultTag = 'reference';
         }
-        
+
         const newFile: TestFile = {
           id: data.id,
           name: data.name,
@@ -178,39 +347,148 @@ export default function App() {
           tag: defaultTag
         };
         updatedFiles.push(newFile);
-        
+
         if (defaultTag === 'reference') {
           setActiveRefId(data.id);
         } else if (!activeTestId) {
           setActiveTestId(data.id);
         }
-      } catch (err) {
-        console.error(err);
-        alert(`Failed to upload ${file.name}`);
+
+        setUploadProgress(prev => ({
+          ...prev,
+          [uploadId]: { name: file.name, progress: 100, status: 'done' }
+        }));
+        toast.success(`Loaded ${file.name} (${data.columns.length} channels, ${data.rowCount.toLocaleString()} rows)`, 'Run Ingested');
+      } catch (err: any) {
+        setUploadProgress(prev => ({
+          ...prev,
+          [uploadId]: {
+            name: file.name,
+            progress: 100,
+            status: 'error',
+            errorMsg: 'Network or backend connection error',
+            suggestion: 'Make sure the backend API server is running on port 8000.'
+          }
+        }));
+        toast.error(`Failed to upload ${file.name}. Ensure backend is running.`, 'Upload Error');
       }
     }
-    
+
     setFiles(updatedFiles);
     setIsUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
+
+    // Auto clear completed progress cards after 4 seconds
+    setTimeout(() => {
+      setUploadProgress(prev => {
+        const next: typeof prev = {};
+        Object.entries(prev).forEach(([k, v]) => {
+          if (v.status !== 'done') next[k] = v;
+        });
+        return next;
+      });
+    }, 4000);
   };
 
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) handleUploadFilesList(e.target.files);
+  };
+
+  // Drag and drop onto library panel
+  const handleLibraryDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOverLibrary(true);
+  };
+
+  const handleLibraryDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOverLibrary(false);
+  };
+
+  const handleLibraryDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOverLibrary(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleUploadFilesList(e.dataTransfer.files);
+    }
+  };
+
+  // Delete with Undo
   const deleteFile = (id: string) => {
-    setFiles(files.filter(f => f.id !== id));
-    if (activeTestId === id) setActiveTestId('');
-    if (activeRefId === id) setActiveRefId('');
+    const deletedFile = files.find(f => f.id === id);
+    if (!deletedFile) return;
+
+    const wasRef = activeRefId === id;
+    const wasTest = activeTestId === id;
+
+    setFiles(prev => prev.filter(f => f.id !== id));
+    if (wasRef) setActiveRefId('');
+    if (wasTest) setActiveTestId('');
+    setBulkSelectedIds(prev => prev.filter(item => item !== id));
+
+    toast.info(`Deleted "${deletedFile.name}"`, 'Run Removed', {
+      label: 'Undo',
+      onClick: () => {
+        setFiles(prev => [...prev, deletedFile]);
+        if (wasRef) setActiveRefId(deletedFile.id);
+        if (wasTest) setActiveTestId(deletedFile.id);
+        toast.success(`Restored "${deletedFile.name}"`, 'Run Restored');
+      }
+    });
+  };
+
+  // Bulk actions
+  const bulkDeleteSelected = () => {
+    if (bulkSelectedIds.length === 0) return;
+    const deletedFiles = files.filter(f => bulkSelectedIds.includes(f.id));
+    const count = deletedFiles.length;
+
+    setFiles(prev => prev.filter(f => !bulkSelectedIds.includes(f.id)));
+    if (bulkSelectedIds.includes(activeRefId)) setActiveRefId('');
+    if (bulkSelectedIds.includes(activeTestId)) setActiveTestId('');
+    setBulkSelectedIds([]);
+
+    toast.info(`Deleted ${count} run${count > 1 ? 's' : ''}`, 'Bulk Action', {
+      label: 'Undo',
+      onClick: () => {
+        setFiles(prev => [...prev, ...deletedFiles]);
+        toast.success(`Restored ${count} run${count > 1 ? 's' : ''}`, 'Runs Restored');
+      }
+    });
+  };
+
+  const bulkTagSelected = (tag: 'useful' | 'reviewable' | 'reference' | 'archive') => {
+    if (bulkSelectedIds.length === 0) return;
+    setFiles(prev => prev.map(f => bulkSelectedIds.includes(f.id) ? { ...f, tag } : f));
+    toast.success(`Tagged ${bulkSelectedIds.length} runs as ${tag}`, 'Bulk Tagged');
+    setBulkSelectedIds([]);
+  };
+
+  const toggleBulkSelect = (id: string) => {
+    setBulkSelectedIds(prev => 
+      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+    );
+  };
+
+  const selectAllFiltered = () => {
+    setBulkSelectedIds(filteredFiles.map(f => f.id));
+  };
+
+  const clearBulkSelection = () => {
+    setBulkSelectedIds([]);
   };
 
   const updateTag = (id: string, tag: 'useful' | 'reviewable' | 'reference' | 'archive') => {
     setFiles(files.map(f => {
       if (f.id === id) {
         if (tag === 'reference') {
-          // If setting a new reference, demote the old reference to useful
           return { ...f, tag };
         }
         return { ...f, tag };
       }
-      // If we made something else reference, remove old reference tag
       if (tag === 'reference' && f.tag === 'reference') {
         return { ...f, tag: 'useful' };
       }
@@ -221,6 +499,29 @@ export default function App() {
       setActiveRefId(id);
     }
   };
+
+  // Filtered and sorted files list
+  const filteredFiles = useMemo(() => {
+    let result = [...files];
+    if (libraryTagFilter !== 'all') {
+      result = result.filter(f => f.tag === libraryTagFilter);
+    }
+    if (librarySearch.trim()) {
+      const q = librarySearch.toLowerCase();
+      result = result.filter(f => 
+        f.name.toLowerCase().includes(q) || 
+        f.columns.some(c => c.name.toLowerCase().includes(q))
+      );
+    }
+    result.sort((a, b) => {
+      if (librarySort === 'name') return a.name.localeCompare(b.name);
+      if (librarySort === 'rows') return b.rowCount - a.rowCount;
+      if (librarySort === 'channels') return b.columns.length - a.columns.length;
+      if (librarySort === 'tag') return (a.tag || '').localeCompare(b.tag || '');
+      return 0;
+    });
+    return result;
+  }, [files, libraryTagFilter, librarySearch, librarySort]);
 
   // Drag and Drop Logics
   const handleDragStart = (e: React.DragEvent, colName: string) => {
@@ -306,20 +607,21 @@ export default function App() {
 
       if (!response.ok) {
         const err = await response.json();
-        alert(`Analysis failed: ${err.detail}`);
+        toast.error(`Analysis failed: ${err.detail || 'Server error'}`, 'Similarity Engine');
         setIsAnalyzing(false);
         return;
       }
 
       const data = await response.json();
       setSimilarityResults(data.results);
+      toast.success(`Completed similarity comparison across ${Object.keys(data.results || {}).length} sensor channels`, 'Pattern Analysis');
       
       // Auto select first mapped result column
       const firstCol = Object.keys(data.results)[0];
       if (firstCol) setSelectedResultCol(firstCol);
     } catch (e) {
       console.error(e);
-      alert('Network error analyzing similarity');
+      toast.error('Network error analyzing similarity. Backend may be offline.', 'Connection Error');
     }
     setIsAnalyzing(false);
   };
@@ -342,10 +644,11 @@ export default function App() {
           comment: feedbackComment
         })
       });
-      alert('Feedback logged successfully!');
+      toast.success('Feedback logged successfully!', 'Feedback Saved');
       setFeedbackComment('');
     } catch (e) {
       console.error(e);
+      toast.error('Failed to submit feedback to backend.', 'Feedback Error');
     }
   };
 
@@ -405,14 +708,15 @@ export default function App() {
 
       if (response.ok) {
         const data = await response.json();
-        alert(`Workspace successfully exported to target folder!\n\nJSON: ${data.saved_json}\nMarkdown: ${data.saved_markdown}`);
+        toast.success(`Workspace exported to target folder: ${data.saved_json}`, 'Export Successful');
       } else {
         const err = await response.json();
-        alert(`Failed to save to OneDrive: ${err.detail}`);
+        toast.error(`Failed to save to OneDrive: ${err.detail || 'Unknown error'}`, 'OneDrive Export Error');
       }
-    } catch (e) {
-      alert('Export failed due to network error.');
+    } catch {
+      toast.error('Export failed due to network error.', 'Export Error');
     }
+
   };
 
   const triggerLocalJsonDownload = async () => {
@@ -467,9 +771,11 @@ export default function App() {
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-    } catch (e) {
-      alert('Failed to export workspace session.');
+      toast.success('Workspace session exported to file download', 'Session Saved');
+    } catch {
+      toast.error('Failed to export workspace session.', 'Export Error');
     }
+
   };
 
   const handleImportWorkspace = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -551,17 +857,19 @@ export default function App() {
             }
           }
           
-          alert(`Workspace session successfully imported!\n• Restored ${importedFiles.length} runs across all engines\n• Restored interactive mappings & diagnostics`);
+          toast.success(`Workspace restored! Loaded ${importedFiles.length} runs across all analysis engines.`, 'Session Restored');
         } else {
-          alert('Import failed: Backend could not ingest cache.');
+          toast.error('Import failed: Backend could not ingest cache.', 'Import Error');
         }
-      } catch (err) {
-        alert('Invalid workspace session JSON file.');
+      } catch {
+        toast.error('Invalid workspace session JSON file.', 'Import Error');
       }
+
     };
     reader.readAsText(file);
     if (workspaceInputRef.current) workspaceInputRef.current.value = '';
   };
+
 
 
 
@@ -573,25 +881,24 @@ export default function App() {
     const testSeries = result.plot_data.test.map((val, idx) => [idx, val]);
 
     return {
-      backgroundColor: 'transparent',
-      tooltip: {
-        trigger: 'axis',
-        axisPointer: { type: 'cross' }
-      },
+      ...SENSORLENS_CHART_THEME,
       legend: {
+        ...SENSORLENS_CHART_THEME.legend,
         data: ['Expected Reference', 'Test Run'],
-        textStyle: { color: '#ccc' }
+        top: 6,
       },
-      grid: { left: '3%', right: '4%', bottom: '5%', containLabel: true },
+      grid: { left: '3%', right: '4%', bottom: '8%', top: '16%', containLabel: true },
       xAxis: {
+        ...SENSORLENS_CHART_THEME.xAxis,
         type: 'value',
-        axisLabel: { color: '#aaa' },
-        splitLine: { show: false }
+        name: 'Step Index (Normalized)',
+        nameTextStyle: { color: '#94a3b8', fontSize: 11 },
       },
       yAxis: {
+        ...SENSORLENS_CHART_THEME.yAxis,
         type: 'value',
-        axisLabel: { color: '#aaa' },
-        splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.05)' } }
+        name: 'Amplitude',
+        nameTextStyle: { color: '#94a3b8', fontSize: 11 },
       },
       series: [
         {
@@ -599,8 +906,8 @@ export default function App() {
           type: 'line',
           data: refSeries,
           smooth: true,
-          lineStyle: { width: 3, color: '#818cf8' },
-          itemStyle: { color: '#818cf8' },
+          lineStyle: { width: 2.5, color: '#3b82f6' },
+          itemStyle: { color: '#3b82f6' },
           emphasis: { focus: 'series' }
         },
         {
@@ -608,12 +915,32 @@ export default function App() {
           type: 'line',
           data: testSeries,
           smooth: true,
-          lineStyle: { width: 3, color: '#00f2fe' },
+          lineStyle: { width: 2.5, color: '#00f2fe' },
           itemStyle: { color: '#00f2fe' },
           emphasis: { focus: 'series' }
         }
       ]
     };
+  };
+
+  const exportComparisonCsv = () => {
+    const result = similarityResults[selectedResultCol];
+    if (!result || !result.plot_data) return;
+    const len = Math.max(result.plot_data.ref.length, result.plot_data.test.length);
+    const rows: (string | number)[][] = [];
+    for (let i = 0; i < len; i++) {
+      rows.push([
+        i,
+        result.plot_data.ref[i] !== undefined ? result.plot_data.ref[i] : '',
+        result.plot_data.test[i] !== undefined ? result.plot_data.test[i] : '',
+      ]);
+    }
+    exportToCsv(
+      `${selectedResultCol}_similarity_comparison`,
+      ['Step_Index', 'Expected_Reference_Norm', 'Test_Run_Norm'],
+      rows
+    );
+    toast.success(`Exported CSV for ${selectedResultCol}`, 'CSV Exported');
   };
 
   const togglePlotColumn = (fileId: string, colName: string) => {
@@ -626,256 +953,232 @@ export default function App() {
   };
 
   return (
-    <div className="app-container">
-      {/* Top Navbar */}
-      <header className="header">
-        <div className="brand">
-          <Activity className="brand-icon" size={28} />
-          <div className="brand-text">
-            <h1 className="brand-title">SensorLens</h1>
-            <p className="brand-subtitle">Generic BSH Diagnostic Analyzer</p>
-          </div>
-        </div>
+    <div className="app-shell">
+      {/* Collapsible Left Navigation Sidebar */}
+      <AppSidebar
+        activeView={activeView}
+        onSelectView={navigateToView}
+        isCollapsed={isSidebarCollapsed}
+        onToggleCollapse={toggleSidebar}
+        isDrawerOpen={isDrawerOpen}
+        onCloseDrawer={() => setIsDrawerOpen(false)}
+        fileCount={files.length}
+        sensorCount={selectedPlotCols.length}
+        similarityCount={Object.keys(similarityResults).length}
+        onOpenGuide={() => setShowGuide(true)}
+        onOpenSettings={() => setShowSettings(true)}
+        onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
+        onExportSession={triggerLocalJsonDownload}
+        onImportClick={() => workspaceInputRef.current?.click()}
+      />
 
-        {/* View Toggles */}
-        <div className="view-toggles">
-          <button 
-            onClick={() => setActiveView('dashboard')}
-            className={`toggle-btn ${activeView === 'dashboard' ? 'active' : ''}`}
-          >
-            Dashboard
-          </button>
-          <button 
-            onClick={() => {
-              setActiveView('visualizer');
-              // Auto populate chart selection if empty
-              if (selectedPlotCols.length === 0 && files.length > 0) {
-                const firstF = files[0];
-                if (firstF && firstF.columns[0]) {
-                  setSelectedPlotCols([{ fileId: firstF.id, colName: firstF.columns[0].name, fileName: firstF.name }]);
-                }
-              }
-            }}
-            className={`toggle-btn ${activeView === 'visualizer' ? 'active' : ''}`}
-          >
-            Visual Report
-          </button>
-          <button 
-            onClick={() => setActiveView('alignment')}
-            className={`toggle-btn ${activeView === 'alignment' ? 'active' : ''}`}
-          >
-            Column Alignment
-          </button>
-          <button 
-            onClick={() => setActiveView('baseline')}
-            className={`toggle-btn ${activeView === 'baseline' ? 'active' : ''}`}
-          >
-            Baseline Engine
-          </button>
-          <button 
-            onClick={() => setActiveView('compare')}
-            className={`toggle-btn ${activeView === 'compare' ? 'active' : ''}`}
-          >
-            Similarity Matcher
-          </button>
-          <button 
-            onClick={() => setActiveView('analytics')}
-            className={`toggle-btn ${activeView === 'analytics' ? 'active' : ''}`}
-          >
-            Analytics & ML Studio
-          </button>
-        </div>
+      {/* Main App Content Area */}
+      <div className="app-main-wrapper">
+        {/* Sticky Page Header */}
+        <AppHeader
+          activeView={activeView}
+          onSelectView={navigateToView}
+          onOpenMobileDrawer={() => setIsDrawerOpen(true)}
+          onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
+          activeRefName={files.find(f => f.id === activeRefId)?.name}
+          activeTestName={files.find(f => f.id === activeTestId)?.name}
+          fileCount={files.length}
+          hasAlignment={Object.keys(mappings).length > 0}
+          hasBaseline={!!activeRefId}
+          hasAnalysis={Object.keys(similarityResults).length > 0}
+          primaryAction={
+            activeView === 'dashboard' ? (
+              <Button 
+                variant="primary" 
+                size="sm" 
+                onClick={() => fileInputRef.current?.click()}
+                isLoading={isUploading}
+                id="btn-header-upload"
+              >
+                <Upload size={14} /> Upload Run
+              </Button>
+            ) : activeView === 'compare' ? (
+              <Button 
+                variant="primary" 
+                size="sm" 
+                onClick={runAnalysis} 
+                isLoading={isAnalyzing}
+                disabled={!activeRefId || !activeTestId}
+                id="btn-header-run-similarity"
+              >
+                <Play size={14} /> Run Analysis
+              </Button>
 
-        {/* Configuration Actions */}
-        <div className="header-actions">
-          <button 
-            onClick={() => setShowGuide(true)}
-            className="btn"
-            title="How to Use Guide"
-            style={{ display: 'flex', gap: '4px', alignItems: 'center' }}
-          >
-            <Info size={14} />
-            <span>Guide</span>
-          </button>
+            ) : activeView === 'alignment' ? (
+              <Button 
+                variant="secondary" 
+                size="sm" 
+                onClick={fetchSuggestedMappings}
+                disabled={!activeRefId || !activeTestId}
+                id="btn-header-suggest-align"
+              >
+                <RefreshCw size={14} /> Suggest Mappings
+              </Button>
+            ) : undefined
+          }
+        />
 
-          <button 
-            onClick={() => setShowSettings(!showSettings)}
-            className="btn btn-icon"
-            title="Settings"
-          >
-            <Settings size={16} />
-          </button>
-          
-          <button 
-            onClick={triggerLocalJsonDownload}
-            className="btn"
-            title="Download Workspace JSON"
-          >
-            <Download size={14} />
-            <span>Export Session</span>
-          </button>
+        {/* Hidden File Inputs for Workspace Import */}
+        <input 
+          type="file" 
+          ref={workspaceInputRef} 
+          onChange={handleImportWorkspace} 
+          accept=".json" 
+          className="hidden" 
+        />
 
-          <button 
-            onClick={() => workspaceInputRef.current?.click()}
-            className="btn"
-            title="Upload Workspace JSON"
-          >
-            <UploadCloud size={14} />
-            <span>Import</span>
-          </button>
-          
-          <input 
-            type="file" 
-            ref={workspaceInputRef} 
-            onChange={handleImportWorkspace} 
-            accept=".json" 
-            className="hidden" 
-          />
-        </div>
-      </header>
+        {/* Main Content Area */}
+        <main className="flex-1" style={{ position: 'relative', overflow: 'hidden' }}>
 
-      {/* Main Settings Modal Panel */}
-      {showSettings && (
-        <div className="settings-panel">
-          <div className="settings-group">
-            <h3>Similarity Decision Thresholds</h3>
-            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '8px', lineHeight: '1.3' }}>
-              Choose how strict the matching is. Lower numbers are easier to match; higher numbers require lines to look almost identical.
-            </p>
-            <div className="settings-field">
-              <span className="settings-label">Match Threshold: <b>&gt;= {(settings.matchThreshold * 100).toFixed(0)}%</b></span>
-              <input 
-                type="range" min="0.5" max="1.0" step="0.05"
-                value={settings.matchThreshold}
-                onChange={(e) => setSettings({ ...settings, matchThreshold: parseFloat(e.target.value) })}
-                className="range-input"
-              />
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', lineHeight: '1.2' }}>
-                If a score is higher than this, it gets a green <b>MATCH</b> badge (like puzzle pieces that fit perfectly!).
-              </span>
-            </div>
-            <div className="settings-field" style={{ marginTop: '8px' }}>
-              <span className="settings-label">Similar Threshold: <b>&gt;= {(settings.similarThreshold * 100).toFixed(0)}%</b></span>
-              <input 
-                type="range" min="0.3" max="0.8" step="0.05"
-                value={settings.similarThreshold}
-                onChange={(e) => setSettings({ ...settings, similarThreshold: parseFloat(e.target.value) })}
-                className="range-input"
-              />
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', lineHeight: '1.2' }}>
-                Scores between Match and this get a yellow <b>SIMILAR</b> badge (requires verification). Scores below this get a red <b>NO MATCH</b> warning.
-              </span>
-            </div>
-          </div>
-
-          <div className="settings-group">
-            <h3>Metric Weight Distribution</h3>
-            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '8px', lineHeight: '1.3' }}>
-              Tell the app whether wave shape timing is more important than pattern speed flexibility.
-            </p>
-            <div className="settings-field">
-              <span className="settings-label">Pearson (Shape Sync): <b>{(settings.wPearson * 100).toFixed(0)}%</b></span>
-              <input 
-                type="range" min="0" max="1.0" step="0.1"
-                value={settings.wPearson}
-                onChange={(e) => {
-                  const val = parseFloat(e.target.value);
-                  setSettings({ ...settings, wPearson: val, wDtw: 1.0 - val });
-                }}
-                className="range-input"
-              />
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', lineHeight: '1.2' }}>
-                Focuses on timing. Moving this slider up means the curves must go up/down at the exact same second, like synchronized dancers.
-              </span>
-            </div>
-            <div className="settings-field" style={{ marginTop: '8px' }}>
-              <span className="settings-label">DTW (Time Warp Alignment): <b>{(settings.wDtw * 100).toFixed(0)}%</b></span>
-              <input 
-                type="range" min="0" max="1.0" step="0.1"
-                value={settings.wDtw}
-                onChange={(e) => {
-                  const val = parseFloat(e.target.value);
-                  setSettings({ ...settings, wDtw: val, wPearson: 1.0 - val });
-                }}
-                className="range-input"
-              />
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', lineHeight: '1.2' }}>
-                Focuses on pattern. Moving this up allows starting delays or speed changes, as long as the overall wave looks the same (like a song played slower).
-              </span>
-            </div>
-          </div>
-
-          <div className="settings-group">
-            <h3>Enterprise Integrations</h3>
-            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '8px', lineHeight: '1.3' }}>
-              Where to save your reports and how to connect smart features.
-            </p>
-            <div className="settings-field">
-              <span className="settings-label">OneDrive Local Sync Folder</span>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <input 
-                  type="text"
-                  value={settings.oneDrivePath}
-                  onChange={(e) => setSettings({ ...settings, oneDrivePath: e.target.value })}
-                  className="settings-input-text"
-                />
-                <button 
-                  onClick={exportWorkspaceToOneDrive}
-                  className="btn btn-primary"
-                  style={{ whiteSpace: 'nowrap' }}
-                >
-                  Sync
-                </button>
-              </div>
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', lineHeight: '1.2' }}>
-                Saves report summaries to this folder so your team's Copilot AI can automatically read and index them.
-              </span>
-            </div>
-            <div className="settings-field" style={{ marginTop: '8px' }}>
-              <span className="settings-label">Gemini API Key (Optional)</span>
-              <input 
-                type="password"
-                placeholder="Enter API Key..."
-                value={settings.apiKey}
-                onChange={(e) => setSettings({ ...settings, apiKey: e.target.value })}
-                className="settings-input-text"
-              />
-              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', lineHeight: '1.2' }}>
-                Enter an API key to turn on generative AI summaries. If blank, we generate detailed assessments using local math.
-              </span>
-            </div>
-          </div>
-          <button 
-            onClick={() => setShowSettings(false)}
-            className="settings-close-btn"
-          >
-            <X size={16} />
-          </button>
-        </div>
-      )}
-
-      {/* Main Content Area */}
-      <main className="flex-1" style={{ position: 'relative', overflow: 'hidden' }}>
         
         {/* VIEW 1: DASHBOARD */}
         <div style={{ display: activeView === 'dashboard' ? 'flex' : 'none', flex: 1, minHeight: 0, height: '100%', width: '100%', flexDirection: 'column' }}>
           <div className="dashboard-layout">
             
             {/* Left Library Column */}
-            <div className="glass-panel">
-              <div className="panel-header" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '4px' }}>
-                <h2>Test Run Library</h2>
-                <p style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>
-                  Upload Excel logs. Select one run as <b>Ref</b> (Reference) and another as <b>Test</b> to compare.
-                </p>
-                <button 
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={isUploading}
-                  className="btn btn-primary"
-                >
-                  {isUploading ? <RefreshCw className="animate-spin" size={12} /> : <Upload size={12} />}
-                  <span>Upload Excel</span>
-                </button>
+            <div 
+              className="glass-panel library-dropzone-container"
+              onDragOver={handleLibraryDragOver}
+              onDragLeave={handleLibraryDragLeave}
+              onDrop={handleLibraryDrop}
+            >
+              {isDragOverLibrary && (
+                <div className="library-drag-overlay">
+                  <Upload size={36} className="text-accent-cyan animate-bounce" />
+                  <span style={{ fontSize: '0.9rem', fontWeight: 600, color: '#fff' }}>
+                    Drop Excel Runs Here
+                  </span>
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                    Auto-ingests columns, channels, and sensor telemetry
+                  </span>
+                </div>
+              )}
+
+              <div className="panel-header" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px' }}>
+                <div className="library-header-row">
+                  <div className="library-title-group">
+                    <span className="library-title-text">Runs & Datasets</span>
+                    <span className="library-count-pill">{files.length}</span>
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isUploading}
+                    className="library-upload-btn"
+                    id="btn-library-upload"
+                    title="Upload telemetry file (.xlsx, .xls)"
+                  >
+                    <Upload size={12} />
+                    <span>Upload</span>
+                  </button>
+                </div>
+
+                {/* Search & Sort Controls */}
+                <div className="library-toolbar">
+                  <div className="library-search-bar">
+                    <Search size={12} className="search-icon" />
+                    <input 
+                      type="text" 
+                      className="library-search-input"
+                      placeholder="Search runs or channels..." 
+                      value={librarySearch}
+                      onChange={(e) => setLibrarySearch(e.target.value)}
+                      aria-label="Search test runs"
+                    />
+                    {librarySearch && (
+                      <button 
+                        type="button"
+                        onClick={() => setLibrarySearch('')} 
+                        className="library-search-clear"
+                        aria-label="Clear search"
+                      >
+                        <X size={11} />
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="library-sort-picker" title="Sort runs by">
+                    <ArrowUpDown size={11} className="sort-icon" />
+                    <select 
+                      value={librarySort} 
+                      onChange={(e) => setLibrarySort(e.target.value as any)}
+                      aria-label="Sort library files"
+                      className="library-sort-native-select"
+                    >
+                      <option value="name">Name</option>
+                      <option value="rows">Rows</option>
+                      <option value="channels">Channels</option>
+                      <option value="tag">Tag</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Tag Filter Segmented Buttons */}
+                <div className="library-filter-segments" role="radiogroup" aria-label="Filter runs by tag">
+                  {(['all', 'reference', 'useful', 'reviewable', 'archive'] as const).map(tag => {
+                    const count = tag === 'all' ? files.length : files.filter(f => f.tag === tag).length;
+                    const label = tag === 'all' ? 'All' : tag === 'reference' ? 'Ref' : tag.charAt(0).toUpperCase() + tag.slice(1);
+                    return (
+                      <button 
+                        key={tag}
+                        type="button"
+                        onClick={() => setLibraryTagFilter(tag)}
+                        className={`library-segment-btn ${libraryTagFilter === tag ? 'active' : ''}`}
+                        role="radio"
+                        aria-checked={libraryTagFilter === tag}
+                      >
+                        <span>{label}</span>
+                        <span className="segment-count">({count})</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Bulk Action Bar */}
+                {bulkSelectedIds.length > 0 && (
+                  <div className="library-bulk-bar">
+                    <span className="library-bulk-label">{bulkSelectedIds.length} selected</span>
+                    <div className="library-bulk-actions">
+                      <button onClick={selectAllFiltered} className="btn-text-sm" title="Select All Visible">
+                        All
+                      </button>
+                      <button onClick={clearBulkSelection} className="btn-text-sm" title="Deselect All">
+                        Clear
+                      </button>
+                      <select 
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            bulkTagSelected(e.target.value as any);
+                            e.target.value = '';
+                          }
+                        }}
+                        defaultValue=""
+                        className="tag-select"
+                        style={{ height: 22, fontSize: '11px' }}
+                      >
+                        <option value="" disabled>Tag as...</option>
+                        <option value="useful">Useful</option>
+                        <option value="reviewable">Reviewable</option>
+                        <option value="reference">Reference</option>
+                        <option value="archive">Archive</option>
+                      </select>
+                      <button 
+                        onClick={bulkDeleteSelected}
+                        className="btn-icon text-muted hover-red"
+                        title="Delete selected runs"
+                        style={{ padding: 2 }}
+                      >
+                        <Trash2 size={13} className="text-rose-400" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <input 
                   type="file" 
                   multiple 
@@ -886,8 +1189,47 @@ export default function App() {
                 />
               </div>
 
-              <div className="panel-body">
-                {/* Upload Drop Zone fallback */}
+              <div className="panel-body" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+                {/* Per-File Upload Progress Cards */}
+                {Object.keys(uploadProgress).length > 0 && (
+                  <div className="upload-progress-list">
+                    {Object.entries(uploadProgress).map(([upId, item]) => (
+                      <div key={upId} className="upload-progress-card">
+                        <div className="upload-progress-header">
+                          <span style={{ fontWeight: 500, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.name}>
+                            {item.name}
+                          </span>
+                          <span style={{ 
+                            fontSize: '10px', 
+                            color: item.status === 'error' ? 'var(--color-danger-text)' : item.status === 'done' ? 'var(--color-success-text)' : 'var(--accent-cyan)' 
+                          }}>
+                            {item.status === 'uploading' ? 'Uploading...' : item.status === 'parsing' ? 'Parsing telemetry...' : item.status === 'done' ? 'Ready' : 'Failed'}
+                          </span>
+                        </div>
+                        <div className="upload-progress-bar-bg">
+                          <div 
+                            className="upload-progress-bar-fill" 
+                            style={{ 
+                              width: `${item.progress}%`,
+                              background: item.status === 'error' ? 'var(--color-danger-border)' : undefined
+                            }} 
+                          />
+                        </div>
+                        {item.status === 'error' && item.suggestion && (
+                          <div className="upload-error-suggestion">
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontWeight: 600 }}>
+                              <AlertCircle size={11} />
+                              <span>{item.errorMsg || 'Parse Error'}</span>
+                            </div>
+                            <div style={{ marginTop: 2 }}>{item.suggestion}</div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Empty State when no files uploaded */}
                 {files.length === 0 && (
                   <div 
                     onClick={() => fileInputRef.current?.click()}
@@ -902,71 +1244,107 @@ export default function App() {
                       padding: '24px',
                       textAlign: 'center',
                       cursor: 'pointer',
-                      background: 'rgba(255, 255, 255, 0.01)'
+                      background: 'rgba(255, 255, 255, 0.01)',
+                      minHeight: 180
                     }}
                   >
                     <Upload size={32} style={{ color: 'var(--text-muted)', marginBottom: '12px' }} />
                     <p style={{ fontSize: '0.8rem', color: 'var(--text-primary)', fontWeight: 500 }}>No files ingested yet</p>
-                    <p style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '4px' }}>Upload sensor Excel sheets</p>
+                    <p style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                      Drag & drop or click to ingest Excel sensor logs (.xlsx, .xls)
+                    </p>
+                  </div>
+                )}
+
+                {/* Filter Empty State */}
+                {files.length > 0 && filteredFiles.length === 0 && (
+                  <div style={{ padding: '24px 12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+                    <p>No runs match "{librarySearch || libraryTagFilter}"</p>
+                    <button 
+                      onClick={() => { setLibrarySearch(''); setLibraryTagFilter('all'); }}
+                      className="btn-text-sm"
+                      style={{ marginTop: 8 }}
+                    >
+                      Clear search & filters
+                    </button>
                   </div>
                 )}
 
                 {/* Files List */}
-                {files.length > 0 && (
-                  <div className="file-list">
-                    {files.map(f => (
-                      <div 
-                        key={f.id} 
-                        className={`file-card ${
-                          activeTestId === f.id ? 'active-test' : activeRefId === f.id ? 'active-ref' : ''
-                        }`}
-                      >
-                        <div className="file-card-header">
-                          <div style={{ overflow: 'hidden' }}>
-                            <p className="file-title" title={f.name}>{f.name}</p>
-                            <p className="file-meta">{f.rowCount} rows • {f.columns.length} channels</p>
-                          </div>
-                          <button 
-                            onClick={() => deleteFile(f.id)}
-                            style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
-                          >
-                            <Trash2 size={12} className="hover:text-red-400" />
-                          </button>
-                        </div>
-
-                        {/* Tag & Selection Controls */}
-                        <div className="file-actions">
-                          <select 
-                            value={f.tag}
-                            onChange={(e) => updateTag(f.id, e.target.value as any)}
-                            className="tag-select"
-                          >
-                            <option value="useful">Useful Run</option>
-                            <option value="reviewable">Needs Review</option>
-                            <option value="reference">Reference</option>
-                            <option value="archive">Archive</option>
-                          </select>
-
-                          <div className="selection-toggle-group">
+                {filteredFiles.length > 0 && (
+                  <div className="file-list" style={{ overflowY: 'auto', flex: 1 }}>
+                    {filteredFiles.map(f => {
+                      const isBulkSelected = bulkSelectedIds.includes(f.id);
+                      return (
+                        <div 
+                          key={f.id} 
+                          className={`file-card ${
+                            activeTestId === f.id ? 'active-test' : activeRefId === f.id ? 'active-ref' : ''
+                          }`}
+                        >
+                          <div className="file-card-header">
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleBulkSelect(f.id);
+                                }}
+                                style={{ background: 'transparent', border: 'none', color: isBulkSelected ? 'var(--accent-cyan)' : 'var(--text-muted)', cursor: 'pointer', padding: 0 }}
+                                title={isBulkSelected ? 'Deselect run' : 'Select run for bulk actions'}
+                              >
+                                {isBulkSelected ? <CheckSquare size={13} /> : <Square size={13} />}
+                              </button>
+                              <div style={{ overflow: 'hidden' }}>
+                                <p className="file-title" title={f.name}>{f.name}</p>
+                                <p className="file-meta">{f.rowCount.toLocaleString()} rows • {f.columns.length} channels</p>
+                              </div>
+                            </div>
                             <button 
-                              onClick={() => setActiveTestId(f.id)}
-                              className={`selection-btn ${activeTestId === f.id ? 'active-test-btn' : ''}`}
+                              onClick={() => deleteFile(f.id)}
+                              style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
+                              title="Delete run (with Undo)"
                             >
-                              Test
-                            </button>
-                            <button 
-                              onClick={() => {
-                                setActiveRefId(f.id);
-                                updateTag(f.id, 'reference');
-                              }}
-                              className={`selection-btn ${activeRefId === f.id ? 'active-ref-btn' : ''}`}
-                            >
-                              Ref
+                              <Trash2 size={12} className="hover:text-red-400" />
                             </button>
                           </div>
+
+                          {/* Tag & Selection Controls */}
+                          <div className="file-actions">
+                            <select 
+                              value={f.tag}
+                              onChange={(e) => updateTag(f.id, e.target.value as any)}
+                              className="tag-select"
+                              aria-label={`Tag for ${f.name}`}
+                            >
+                              <option value="useful">Useful Run</option>
+                              <option value="reviewable">Needs Review</option>
+                              <option value="reference">Reference</option>
+                              <option value="archive">Archive</option>
+                            </select>
+
+                            <div className="selection-toggle-group">
+                              <button 
+                                onClick={() => setActiveTestId(f.id)}
+                                className={`selection-btn ${activeTestId === f.id ? 'active-test-btn' : ''}`}
+                                title="Set as Test comparison run"
+                              >
+                                Test
+                              </button>
+                              <button 
+                                onClick={() => {
+                                  setActiveRefId(f.id);
+                                  updateTag(f.id, 'reference');
+                                }}
+                                className={`selection-btn ${activeRefId === f.id ? 'active-ref-btn' : ''}`}
+                                title="Set as Reference golden run"
+                              >
+                                Ref
+                              </button>
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -975,7 +1353,7 @@ export default function App() {
             {/* Right Live Dashboard Summary Grid */}
             <div className="glass-panel">
               <div className="panel-header" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '4px' }}>
-                <h2 style={{ fontSize: '1rem', color: '#fff' }}>Live Channel Overview</h2>
+                <h2 style={{ fontSize: '1rem', color: 'var(--text-primary)' }}>Live Channel Overview</h2>
                 <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                   Inspect sensor profiles below. Click a card to toggle its presence in the Visual Report graph.
                 </p>
@@ -1112,40 +1490,46 @@ export default function App() {
 
         {/* VIEW 2: VISUAL REPORT (FEATURE 1 UPGRADE) */}
         {activeView === 'visualizer' && (
-          <VisualReportView
-            files={files}
-            selectedPlotCols={selectedPlotCols}
-            onChangeSelectedPlotCols={setSelectedPlotCols}
-          />
+          <React.Suspense fallback={<ViewLoadingFallback />}>
+            <VisualReportView
+              files={files}
+              selectedPlotCols={selectedPlotCols}
+              onChangeSelectedPlotCols={setSelectedPlotCols}
+            />
+          </React.Suspense>
         )}
 
         {/* VIEW 3: COLUMN ALIGNMENT (FEATURE 2 UPGRADE - PRESERVED STATE) */}
         <div style={{ display: activeView === 'alignment' ? 'flex' : 'none', flex: 1, minHeight: 0, height: '100%', width: '100%', flexDirection: 'column' }}>
-          <ColumnAlignmentView
-            files={files}
-            activeRefId={activeRefId}
-            activeTestId={activeTestId}
-            onSelectRefId={(id) => {
-              setActiveRefId(id);
-              updateTag(id, 'reference');
-            }}
-            onSelectTestId={setActiveTestId}
-            mappings={mappings}
-            setMappings={setMappings}
-            onRunSimilarityEngine={() => {
-              setActiveView('compare');
-              runAnalysis();
-            }}
-          />
+          <React.Suspense fallback={<ViewLoadingFallback />}>
+            <ColumnAlignmentView
+              files={files}
+              activeRefId={activeRefId}
+              activeTestId={activeTestId}
+              onSelectRefId={(id) => {
+                setActiveRefId(id);
+                updateTag(id, 'reference');
+              }}
+              onSelectTestId={setActiveTestId}
+              mappings={mappings}
+              setMappings={setMappings}
+              onRunSimilarityEngine={() => {
+                setActiveView('compare');
+                runAnalysis();
+              }}
+            />
+          </React.Suspense>
         </div>
 
         {/* VIEW 4: BASELINE ENGINE (FEATURE 3 UPGRADE - PRESERVED STATE) */}
         <div style={{ display: activeView === 'baseline' ? 'flex' : 'none', flex: 1, minHeight: 0, height: '100%', width: '100%', flexDirection: 'column' }}>
-          <BaselineEngineView
-            files={files}
-            mappings={mappings}
-            isActive={activeView === 'baseline'}
-          />
+          <React.Suspense fallback={<ViewLoadingFallback />}>
+            <BaselineEngineView
+              files={files}
+              mappings={mappings}
+              isActive={activeView === 'baseline'}
+            />
+          </React.Suspense>
         </div>
 
         {/* VIEW 5: SIMILARITY COMPARISON */}
@@ -1316,48 +1700,98 @@ export default function App() {
                             <div className="results-detail-grid">
                               {/* Visuals & Curves */}
                               <div>
-                                {/* Comparison ECharts */}
-                                <div className="chart-wrapper-compare">
-                                  <ReactECharts
-                                    option={getComparisonChartOption(selectedResultCol)}
-                                    style={{ height: '100%', width: '100%' }}
-                                    theme="dark"
+                                {/* KPI Metric Cards Row */}
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '8px', marginBottom: '12px' }}>
+                                  <KpiCard
+                                    title="Similarity Index"
+                                    value={`${(res.score * 100).toFixed(0)}%`}
+                                    status={res.category === 'match' ? 'success' : res.category === 'similar' ? 'warning' : 'danger'}
+                                    delta={{
+                                      value: `${(res.score * 100 - 85).toFixed(0)}%`,
+                                      isPositiveGood: true,
+                                      label: 'vs 85% threshold'
+                                    }}
+                                    subtitle={res.category.toUpperCase()}
+                                  />
+                                  <KpiCard
+                                    title="Shape (Pearson r)"
+                                    value={`${(res.pearson * 100).toFixed(0)}%`}
+                                    status={res.pearson >= 0.8 ? 'success' : 'warning'}
+                                    icon={<HelpPopover topic="pearson" />}
+                                    subtitle="Dynamic sync"
+                                  />
+                                  <KpiCard
+                                    title="Time Alignment (DTW)"
+                                    value={`${(res.dtw * 100).toFixed(0)}%`}
+                                    status={res.dtw >= 0.8 ? 'success' : 'warning'}
+                                    icon={<HelpPopover topic="fastdtw" />}
+                                    subtitle="Warping score"
+                                  />
+                                  <KpiCard
+                                    title="Signal Offset (Lag)"
+                                    value={`${res.lag}`}
+                                    unit="steps"
+                                    status={Math.abs(res.lag) > 10 ? 'warning' : 'normal'}
+                                    subtitle={`Max ${res.max_ref.toFixed(1)} / ${res.max_test.toFixed(1)}`}
                                   />
                                 </div>
 
-                                {/* Gauges Grid */}
-                                <div className="gauges-grid">
-                                  <div className="gauge-card">
-                                    <span className="label">Similarity Index</span>
-                                    <p className="value">{(res.score * 100).toFixed(0)}%</p>
-                                    <span className={`similarity-badge ${
-                                      res.category === 'match' ? 'match' : res.category === 'similar' ? 'similar' : 'nomatch'
-                                    }`}>
-                                      {res.category}
-                                    </span>
+                                {/* Comparison ECharts with Header & CSV Export */}
+                                <div className="chart-wrapper-compare" style={{ position: 'relative' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderBottom: '1px solid var(--border-color)' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                      <Activity size={14} className="text-accent-cyan" />
+                                      <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#fff' }}>
+                                        Normalized Waveform Overlay: {selectedResultCol}
+                                      </span>
+                                    </div>
+                                    <Button
+                                      variant="secondary"
+                                      size="sm"
+                                      onClick={exportComparisonCsv}
+                                      title="Export waveform comparison data to CSV"
+                                    >
+                                      <Download size={12} />
+                                      <span>Export CSV</span>
+                                    </Button>
                                   </div>
-                                  
+
+                                  {isAnalyzing ? (
+                                    <div style={{ padding: 20 }}>
+                                      <Skeleton height={260} />
+                                    </div>
+                                  ) : (
+                                    <ReactECharts
+                                      option={getComparisonChartOption(selectedResultCol)}
+                                      style={{ height: '300px', width: '100%' }}
+                                      theme="dark"
+                                    />
+                                  )}
+                                </div>
+
+                                {/* Gauges Grid */}
+                                <div className="gauges-grid" style={{ marginTop: '12px' }}>
                                   <div className="gauge-card">
-                                    <span className="label">Shape Correlation</span>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                      <span className="label">Shape Correlation</span>
+                                      <HelpPopover topic="pearson" />
+                                    </div>
                                     <p className="value">{(res.pearson * 100).toFixed(0)}%</p>
                                     <div className="gauge-bar-track">
-                                      <div className="gauge-bar-fill" style={{ width: `${res.pearson * 100}%`, backgroundColor: '#818cf8' }} />
+                                      <div className="gauge-bar-fill" style={{ width: `${Math.max(0, Math.min(100, res.pearson * 100))}%`, backgroundColor: '#3b82f6' }} />
                                     </div>
                                   </div>
 
                                   <div className="gauge-card">
-                                    <span className="label">Time Alignment</span>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                      <span className="label">Time Alignment (DTW)</span>
+                                      <HelpPopover topic="fastdtw" />
+                                    </div>
                                     <p className="value">{(res.dtw * 100).toFixed(0)}%</p>
                                     <div className="gauge-bar-track">
-                                      <div className="gauge-bar-fill" style={{ width: `${res.dtw * 100}%`, backgroundColor: '#00f2fe' }} />
+                                      <div className="gauge-bar-fill" style={{ width: `${Math.max(0, Math.min(100, res.dtw * 100))}%`, backgroundColor: '#00f2fe' }} />
                                     </div>
                                   </div>
-                                </div>
-                                <div className="info-card" style={{ marginTop: '16px' }}>
-                                  💡 <b>What do these gauges mean?</b>
-                                  <br />• <b>Similarity Index:</b> Combined score of shape timing and overall likeness.
-                                  <br />• <b>Shape Correlation (Pearson):</b> Measures if the curves rise and fall at the exact same times (like synchronized dancers).
-                                  <br />• <b>Time Alignment (DTW):</b> Measures overall shape likeness, ignoring starting delays or speed changes (like a song played slower).
                                 </div>
                               </div>
 
@@ -1452,97 +1886,286 @@ export default function App() {
 
         {/* VIEW 6: ANALYTICS & ML STUDIO (FEATURE 4) */}
         <div style={{ display: activeView === 'analytics' ? 'flex' : 'none', flex: 1, minHeight: 0, height: '100%', width: '100%', flexDirection: 'column' }}>
-          <AnalyticsView
-            files={files}
-            isActive={activeView === 'analytics'}
-            onFilesUpdate={(updatedFiles) => setFiles(updatedFiles)}
-          />
+          <React.Suspense fallback={<ViewLoadingFallback />}>
+            <AnalyticsView
+              files={files}
+              isActive={activeView === 'analytics'}
+              onFilesUpdate={(updatedFiles) => setFiles(updatedFiles)}
+            />
+          </React.Suspense>
         </div>
 
       </main>
+      </div>
 
-      {showGuide && (
-        <div className="guide-modal-overlay">
-          <div className="guide-modal">
-            <h2 style={{ fontSize: '1.2rem', color: '#fff', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Info size={22} style={{ color: 'var(--accent-cyan)' }} />
-              <span>SensorLens Easy Step-by-Step Guide</span>
-            </h2>
-            
-            <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-              SensorLens compares sensor data runs to see if a test matches an expected baseline pattern. Learn how to use it in 5 quick steps:
-            </p>
-            
-            <div className="guide-step">
-              <div className="guide-step-num">1</div>
-              <div className="guide-step-content">
-                <div className="guide-step-title">Upload Excel Logs</div>
-                <div className="guide-step-desc">
-                  Click <b>Upload Excel</b> to load your test runs from your computer.
-                </div>
+      {/* Settings Modal Dialog */}
+      <Modal
+        isOpen={showSettings}
+        onClose={() => setShowSettings(false)}
+        title="Settings & Similarity Configuration"
+        maxWidth={580}
+        footer={
+          <Button variant="primary" size="sm" onClick={() => setShowSettings(false)}>
+            Close Settings
+          </Button>
+        }
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+          <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: 2 }}>
+            Configure similarity engine parameters, metric weights, and external integrations below:
+          </p>
+
+          {/* Accordion 1: Similarity Decision Thresholds */}
+          <details className="settings-accordion" id="settings-accordion-thresholds">
+            <summary>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Sliders size={15} style={{ color: 'var(--accent-cyan)' }} />
+                <span>Similarity Decision Thresholds</span>
+              </div>
+              <ChevronDown size={14} className="accordion-chevron" />
+            </summary>
+            <div className="settings-accordion-content">
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '8px', lineHeight: '1.3' }}>
+                Choose strictness of pattern matching. Lower numbers match more leniently; higher numbers require near-identical curves.
+              </p>
+              <div className="settings-field">
+                <span className="settings-label">Match Threshold: <b>&gt;= {(settings.matchThreshold * 100).toFixed(0)}%</b></span>
+                <input 
+                  type="range" min="0.5" max="1.0" step="0.05"
+                  value={settings.matchThreshold}
+                  onChange={(e) => setSettings({ ...settings, matchThreshold: parseFloat(e.target.value) })}
+                  className="range-input"
+                  aria-label="Match Threshold"
+                />
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', lineHeight: '1.2' }}>
+                  Scores &gt;= this get a green <b>MATCH</b> badge.
+                </span>
+              </div>
+              <div className="settings-field" style={{ marginTop: '8px' }}>
+                <span className="settings-label">Similar Threshold: <b>&gt;= {(settings.similarThreshold * 100).toFixed(0)}%</b></span>
+                <input 
+                  type="range" min="0.3" max="0.8" step="0.05"
+                  value={settings.similarThreshold}
+                  onChange={(e) => setSettings({ ...settings, similarThreshold: parseFloat(e.target.value) })}
+                  className="range-input"
+                  aria-label="Similar Threshold"
+                />
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', lineHeight: '1.2' }}>
+                  Scores between Match and Similar get a yellow <b>SIMILAR</b> badge. Below this is flagged as <b>NO MATCH</b>.
+                </span>
               </div>
             </div>
+          </details>
 
-            <div className="guide-step">
-              <div className="guide-step-num">2</div>
-              <div className="guide-step-content">
-                <div className="guide-step-title">Set Reference and Test Files</div>
-                <div className="guide-step-desc">
-                  Choose one run as <b>Ref</b> (the perfect baseline pattern you want to match) and another as <b>Test</b> (the run you want to verify).
-                </div>
+          {/* Accordion 2: Metric Weight Distribution */}
+          <details className="settings-accordion" id="settings-accordion-weights">
+            <summary>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Activity size={15} style={{ color: 'var(--accent-blue)' }} />
+                <span>Metric Weight Distribution</span>
+              </div>
+              <ChevronDown size={14} className="accordion-chevron" />
+            </summary>
+            <div className="settings-accordion-content">
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '8px', lineHeight: '1.3' }}>
+                Balance shape correlation (Pearson) with dynamic time warping flexibility (FastDTW).
+              </p>
+              <div className="settings-field">
+                <span className="settings-label">Pearson (Shape Sync): <b>{(settings.wPearson * 100).toFixed(0)}%</b></span>
+                <input 
+                  type="range" min="0" max="1.0" step="0.1"
+                  value={settings.wPearson}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    setSettings({ ...settings, wPearson: val, wDtw: 1.0 - val });
+                  }}
+                  className="range-input"
+                  aria-label="Pearson Shape Sync Weight"
+                />
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', lineHeight: '1.2' }}>
+                  Emphasizes exact second-by-second synchronized rise and fall.
+                </span>
+              </div>
+              <div className="settings-field" style={{ marginTop: '8px' }}>
+                <span className="settings-label">DTW (Time Warp Alignment): <b>{(settings.wDtw * 100).toFixed(0)}%</b></span>
+                <input 
+                  type="range" min="0" max="1.0" step="0.1"
+                  value={settings.wDtw}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    setSettings({ ...settings, wDtw: val, wPearson: 1.0 - val });
+                  }}
+                  className="range-input"
+                  aria-label="DTW Alignment Weight"
+                />
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', lineHeight: '1.2' }}>
+                  Accommodates latency offsets and speed variations.
+                </span>
               </div>
             </div>
+          </details>
 
-            <div className="guide-step">
-              <div className="guide-step-num">3</div>
-              <div className="guide-step-content">
-                <div className="guide-step-title">Align Sensors (Drag & Drop)</div>
-                <div className="guide-step-desc">
-                  Go to the <b>Similarity Matcher</b> tab. Drag the Test cards from the bottom pool and drop them next to the Reference slots. The app automatically suggests pairings!
+          {/* Accordion 3: Enterprise Integrations */}
+          <details className="settings-accordion" id="settings-accordion-integrations">
+            <summary>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Cloud size={15} style={{ color: 'var(--color-info)' }} />
+                <span>Enterprise Integrations</span>
+              </div>
+              <ChevronDown size={14} className="accordion-chevron" />
+            </summary>
+            <div className="settings-accordion-content">
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '8px', lineHeight: '1.3' }}>
+                Automated report exports and generative AI summaries.
+              </p>
+              <div className="settings-field">
+                <span className="settings-label">OneDrive Local Sync Folder</span>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input 
+                    type="text"
+                    value={settings.oneDrivePath}
+                    onChange={(e) => setSettings({ ...settings, oneDrivePath: e.target.value })}
+                    className="settings-input-text"
+                    aria-label="OneDrive Local Sync Folder"
+                  />
+                  <button 
+                    onClick={exportWorkspaceToOneDrive}
+                    className="ui-btn ui-btn-primary ui-btn-sm"
+                    style={{ whiteSpace: 'nowrap' }}
+                  >
+                    Sync
+                  </button>
                 </div>
               </div>
-            </div>
-
-            <div className="guide-step">
-              <div className="guide-step-num">4</div>
-              <div className="guide-step-content">
-                <div className="guide-step-title">Run Similarity Engine</div>
-                <div className="guide-step-desc">
-                  Click <b>Run Similarity Engine</b>. Shape Correlation checks if peaks rise/fall together. Time Alignment stretches/compresses lines to look for pattern matches regardless of starting delays.
-                </div>
+              <div className="settings-field" style={{ marginTop: '8px' }}>
+                <span className="settings-label">Gemini API Key (Optional)</span>
+                <input 
+                  type="password"
+                  placeholder="Enter API Key..."
+                  value={settings.apiKey}
+                  onChange={(e) => setSettings({ ...settings, apiKey: e.target.value })}
+                  className="settings-input-text"
+                  aria-label="Gemini API Key"
+                />
               </div>
             </div>
+          </details>
+        </div>
+      </Modal>
 
-            <div className="guide-step">
-              <div className="guide-step-num">5</div>
-              <div className="guide-step-content">
-                <div className="guide-step-title">Verify AI Report & Verdict</div>
-                <div className="guide-step-desc">
-                  Click any channel header to inspect graphs, see starting delays or peak height differences, read the engineering assessment, and thumbs-up the verdict.
-                </div>
+      {/* Guide Modal Dialog */}
+      <Modal
+        isOpen={showGuide}
+        onClose={() => setShowGuide(false)}
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Info size={20} style={{ color: 'var(--accent-cyan)' }} />
+            <span>SensorLens Step-by-Step Diagnostic Guide</span>
+          </div>
+        }
+        maxWidth={640}
+        footer={
+          <Button variant="primary" size="md" onClick={() => setShowGuide(false)} style={{ width: '100%' }}>
+            Got it, let's get started!
+          </Button>
+        }
+      >
+        <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 'var(--space-3)' }}>
+          SensorLens compares sensor data runs to see if a test matches an expected baseline pattern. Learn how to use it in 6 quick steps:
+        </p>
+        
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+          <div className="guide-step">
+            <div className="guide-step-num">1</div>
+            <div className="guide-step-content">
+              <div className="guide-step-title">Upload Excel Logs</div>
+              <div className="guide-step-desc">
+                Click <b>Upload Run</b> to load telemetry CSV or DAT logs from your computer.
               </div>
             </div>
+          </div>
 
-            <div className="guide-step highlight" style={{ borderLeft: '3px solid #00f2fe' }}>
-              <div className="guide-step-num" style={{ background: '#00f2fe', color: '#031024' }}>6</div>
-              <div className="guide-step-content">
-                <div className="guide-step-title">Analytics & RUL Prognostics Studio</div>
-                <div className="guide-step-desc">
-                  Use <b>Analytics & ML Studio</b> to rank predictive drivers, benchmark 6 ML regression models, and project <b>Remaining Useful Life (RUL)</b> with non-linear exponential degradation physics.
-                </div>
+          <div className="guide-step">
+            <div className="guide-step-num">2</div>
+            <div className="guide-step-content">
+              <div className="guide-step-title">Set Reference and Test Files</div>
+              <div className="guide-step-desc">
+                Choose one run as <b>Ref</b> (the baseline pattern) and another as <b>Test</b> (the run to verify).
               </div>
             </div>
+          </div>
 
-            <button 
-              onClick={() => setShowGuide(false)}
-              className="btn btn-primary"
-              style={{ marginTop: '8px', padding: '12px 0', fontSize: '0.85rem', width: '100%' }}
-            >
-              Let's Get Started!
-            </button>
+          <div className="guide-step">
+            <div className="guide-step-num">3</div>
+            <div className="guide-step-content">
+              <div className="guide-step-title">Align Sensors</div>
+              <div className="guide-step-desc">
+                Go to the <b>Column Alignment</b> tab to auto-match or resolve mismatched header names across files.
+              </div>
+            </div>
+          </div>
+
+          <div className="guide-step">
+            <div className="guide-step-num">4</div>
+            <div className="guide-step-content">
+              <div className="guide-step-title">Build Baseline Envelope</div>
+              <div className="guide-step-desc">
+                Use <b>Baseline Engine</b> to compute Mean ± 3σ corridors across normal reference batches.
+              </div>
+            </div>
+          </div>
+
+          <div className="guide-step">
+            <div className="guide-step-num">5</div>
+            <div className="guide-step-content">
+              <div className="guide-step-title">Run Similarity Engine</div>
+              <div className="guide-step-desc">
+                Check <b>Similarity Matcher</b> for Pearson correlation shape sync and DTW warping patterns.
+              </div>
+            </div>
+          </div>
+
+          <div className="guide-step highlight" style={{ borderLeft: '3px solid var(--accent-cyan)' }}>
+            <div className="guide-step-num" style={{ background: 'var(--accent-cyan)', color: '#031024' }}>6</div>
+            <div className="guide-step-content">
+              <div className="guide-step-title">Analytics & ML Studio</div>
+              <div className="guide-step-desc">
+                Compute correlation heatmaps, PCA dimensionality reduction, target driver rankings, and Remaining Useful Life (RUL) projections.
+              </div>
+            </div>
           </div>
         </div>
-      )}
+      </Modal>
+
+      {/* Global Command Palette (Ctrl/Cmd + K) */}
+      <CommandPalette
+        isOpen={isCommandPaletteOpen}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        onSelectView={navigateToView}
+        files={files}
+        onSelectSensor={(sensorName) => {
+          if (files.length > 0) {
+            const firstWithCol = files.find(f => f.columns.some(c => c.name === sensorName));
+            if (firstWithCol) {
+              setSelectedPlotCols(prev => {
+                const exists = prev.some(p => p.fileId === firstWithCol.id && p.colName === sensorName);
+                if (exists) return prev;
+                return [...prev, { fileId: firstWithCol.id, colName: sensorName, fileName: firstWithCol.name }];
+              });
+            }
+          }
+          navigateToView('visualizer');
+        }}
+        onSelectFile={(fileId) => {
+          setActiveTestId(fileId);
+          navigateToView('dashboard');
+        }}
+        onOpenUpload={() => fileInputRef.current?.click()}
+        onExportSession={triggerLocalJsonDownload}
+        onOpenGuide={() => setShowGuide(true)}
+        onOpenSettings={() => setShowSettings(true)}
+      />
     </div>
   );
 }
+

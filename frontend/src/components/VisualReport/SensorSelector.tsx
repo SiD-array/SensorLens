@@ -11,6 +11,54 @@ import {
   loadBucketMap, saveBucketMap, resolveSensorBucket 
 } from './bucketUtils';
 import { BucketManagerModal } from './BucketManagerModal';
+import { useToast } from '../ui/Toast';
+import { ConfirmDialog } from '../ui/ConfirmDialog';
+
+interface VirtualizedChannelListProps<T> {
+  items: T[];
+  itemHeight?: number;
+  maxHeight?: number;
+  renderItem: (item: T) => React.ReactNode;
+}
+
+function VirtualizedChannelList<T>({
+  items,
+  itemHeight = 40,
+  maxHeight = 420,
+  renderItem
+}: VirtualizedChannelListProps<T>) {
+  const [scrollTop, setScrollTop] = useState(0);
+
+  // If list is small (<= 25 items), render all items directly without virtual windowing
+  if (items.length <= 25) {
+    return <div className="category-items-list">{items.map(renderItem)}</div>;
+  }
+
+  const visibleCount = Math.ceil(maxHeight / itemHeight);
+  const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - 3);
+  const endIndex = Math.min(items.length, startIndex + visibleCount + 6);
+
+  const paddingTop = startIndex * itemHeight;
+  const paddingBottom = Math.max(0, (items.length - endIndex) * itemHeight);
+
+  return (
+    <div
+      onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+      style={{
+        maxHeight: `${maxHeight}px`,
+        overflowY: 'auto',
+        position: 'relative'
+      }}
+      className="category-items-list virtualized-scroll"
+      tabIndex={0}
+      aria-label="Virtualized sensor channel list"
+    >
+      <div style={{ paddingTop: `${paddingTop}px`, paddingBottom: `${paddingBottom}px` }}>
+        {items.slice(startIndex, endIndex).map(renderItem)}
+      </div>
+    </div>
+  );
+}
 
 export interface SelectedPlotCol {
   fileId: string;
@@ -32,6 +80,7 @@ export const SensorSelector: React.FC<SensorSelectorProps> = ({
   selectedPlotCols,
   onChangeSelected
 }) => {
+  const toast = useToast();
   const [activeTab, setActiveTab] = useState<'available' | 'selected'>('available');
   const [searchQuery, setSearchQuery] = useState('');
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
@@ -44,6 +93,7 @@ export const SensorSelector: React.FC<SensorSelectorProps> = ({
   const [buckets, setBuckets] = useState<SensorBucket[]>(() => loadBuckets());
   const [bucketMap, setBucketMap] = useState<SensorBucketMap>(() => loadBucketMap());
   const [isBucketModalOpen, setIsBucketModalOpen] = useState(false);
+  const [categoryToDelete, setCategoryToDelete] = useState<SensorBucket | null>(null);
   const [quickMoveColName, setQuickMoveColName] = useState<string | null>(null);
 
   // Load presets from localStorage with sensible defaults
@@ -303,11 +353,18 @@ export const SensorSelector: React.FC<SensorSelectorProps> = ({
   const handleDeleteCategory = (catId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (buckets.length <= 1) {
-      alert('Cannot delete the last remaining category. At least one category must be kept.');
+      toast.error('Cannot delete the last remaining category. At least one category must be kept.', 'Category Protection');
       return;
     }
     const catToDelete = buckets.find(b => b.id === catId);
-    if (!window.confirm(`Delete category '${catToDelete?.name || ''}'? Assigned sensors will move to another category.`)) return;
+    if (catToDelete) {
+      setCategoryToDelete(catToDelete);
+    }
+  };
+
+  const handleConfirmDeleteCategory = () => {
+    if (!categoryToDelete) return;
+    const catId = categoryToDelete.id;
     const updatedBuckets = buckets.filter(b => b.id !== catId);
     const fallbackId = updatedBuckets[0]?.id;
     const updatedMap = { ...bucketMap };
@@ -319,7 +376,10 @@ export const SensorSelector: React.FC<SensorSelectorProps> = ({
     });
     handleUpdateBuckets(updatedBuckets);
     handleUpdateBucketMap(updatedMap);
+    toast.info(`Category '${categoryToDelete.name}' deleted.`);
+    setCategoryToDelete(null);
   };
+
 
   const handleBulkMoveSelected = (targetBucketId: string) => {
     if (selectedPlotCols.length === 0) return;
@@ -600,13 +660,16 @@ export const SensorSelector: React.FC<SensorSelectorProps> = ({
                     </div>
 
                     {!isCollapsed && (
-                      <div className="category-items-list">
-                        {items.length === 0 ? (
-                          <div className="category-empty-sub">
-                            No sensors assigned yet. Click "Buckets" above or move sensors here.
-                          </div>
-                        ) : (
-                          items.map(item => {
+                      items.length === 0 ? (
+                        <div className="category-empty-sub">
+                          No sensors assigned yet. Click "Buckets" above or move sensors here.
+                        </div>
+                      ) : (
+                        <VirtualizedChannelList
+                          items={items}
+                          itemHeight={40}
+                          maxHeight={380}
+                          renderItem={(item) => {
                             const active = isSelected(item.fileId, item.colName);
                             const isPopoverOpen = quickMoveColName === item.colName;
 
@@ -615,6 +678,15 @@ export const SensorSelector: React.FC<SensorSelectorProps> = ({
                                 key={`${item.fileId}_${item.colName}`}
                                 onClick={() => toggleChannel(item.fileId, item.colName, item.fileName)}
                                 className={`channel-list-item ${active ? 'active' : ''}`}
+                                role="button"
+                                tabIndex={0}
+                                onKeyDown={(e) => {
+                                  if (e.key === ' ' || e.key === 'Enter') {
+                                    e.preventDefault();
+                                    toggleChannel(item.fileId, item.colName, item.fileName);
+                                  }
+                                }}
+                                aria-label={`Sensor ${item.colName}, ${active ? 'selected' : 'not selected'}`}
                               >
                                 <div className="channel-item-left">
                                   <input 
@@ -622,6 +694,8 @@ export const SensorSelector: React.FC<SensorSelectorProps> = ({
                                     checked={active} 
                                     onChange={() => {}} 
                                     className="channel-checkbox"
+                                    aria-label={`Select sensor ${item.colName}`}
+                                    tabIndex={-1}
                                   />
                                   <div className="channel-names">
                                     <span className="channel-col-name" title={item.colName}>{item.colName}</span>
@@ -642,13 +716,15 @@ export const SensorSelector: React.FC<SensorSelectorProps> = ({
                                       onClick={() => setQuickMoveColName(isPopoverOpen ? null : item.colName)}
                                       className={`btn-quick-move-trigger ${isPopoverOpen ? 'active' : ''}`}
                                       title={`Category: ${item.category}. Click to move.`}
+                                      aria-label={`Reassign ${item.colName} category`}
+                                      aria-expanded={isPopoverOpen}
                                     >
                                       <span className="dot-indicator" style={{ backgroundColor: item.bucketColor }} />
                                       <ArrowRightLeft size={11} />
                                     </button>
 
                                     {isPopoverOpen && (
-                                      <div className="quick-move-popover">
+                                      <div className="quick-move-popover" role="dialog" aria-label="Move category options">
                                         <div className="popover-heading">Move to Category:</div>
                                         <div className="popover-options-list">
                                           {buckets.map(b => (
@@ -656,6 +732,8 @@ export const SensorSelector: React.FC<SensorSelectorProps> = ({
                                               key={b.id}
                                               onClick={() => handleQuickMoveSensor(item.colName, b.id)}
                                               className={`popover-option-row ${b.id === item.bucketId ? 'selected' : ''}`}
+                                              role="button"
+                                              tabIndex={0}
                                             >
                                               <span className="dot-mini" style={{ backgroundColor: b.color }} />
                                               <span className="popover-opt-name">{b.name}</span>
@@ -669,6 +747,8 @@ export const SensorSelector: React.FC<SensorSelectorProps> = ({
                                             setShowNewCatInline(true);
                                           }}
                                           className="popover-add-new-btn"
+                                          role="button"
+                                          tabIndex={0}
                                         >
                                           <Plus size={11} />
                                           <span>+ New Category...</span>
@@ -680,9 +760,9 @@ export const SensorSelector: React.FC<SensorSelectorProps> = ({
 
                               </div>
                             );
-                          })
-                        )}
-                      </div>
+                          }}
+                        />
+                      )
                     )}
                   </div>
                 );
@@ -746,6 +826,17 @@ export const SensorSelector: React.FC<SensorSelectorProps> = ({
         onUpdateBucketMap={handleUpdateBucketMap}
         availableSensorNames={allSensorNames}
       />
+
+      <ConfirmDialog
+        isOpen={!!categoryToDelete}
+        title={`Delete category '${categoryToDelete?.name || ''}'?`}
+        message="Assigned sensors will automatically move to another available category. This cannot be undone."
+        confirmLabel="Delete Category"
+        isDestructive={true}
+        onConfirm={handleConfirmDeleteCategory}
+        onCancel={() => setCategoryToDelete(null)}
+      />
     </div>
   );
 };
+
