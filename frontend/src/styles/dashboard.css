@@ -150,8 +150,15 @@
 }
 
 @keyframes slideDown {
-  from { transform: translateY(-10px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+  from {
+    transform: translateY(-10px);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 
 .settings-group {
@@ -391,7 +398,7 @@
   align-items: center;
   margin-top: 12px;
   padding-top: 10px;
-  border-t: 1px solid rgba(255, 255, 255, 0.03);
+  border-top: 1px solid rgba(255, 255, 255, 0.03);
 }
 
 .tag-select {
@@ -1121,20 +1128,36 @@
 }
 
 /* General classes mapping from tailwind */
-.w-full { width: 100%; }
-.flex-1 { flex: 1; }
-.hidden { display: none; }
+.w-full {
+  width: 100%;
+}
+
+.flex-1 {
+  flex: 1;
+}
+
+.hidden {
+  display: none;
+}
+
 .truncate {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
 .animate-spin {
   animation: spin 1s linear infinite;
 }
+
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* User Guide Modal Styles */
@@ -1579,5 +1602,3 @@
 [data-theme="light"] .gauge-bar-track {
   background: rgba(0, 0, 0, 0.08);
 }
-
-

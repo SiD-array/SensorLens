@@ -617,6 +617,67 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+.x-axis-selector-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-panel);
+  border: 1px solid var(--border-color);
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+}
+
+.x-axis-selector-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.x-axis-select {
+  background: var(--surface-card, rgba(15, 23, 42, 0.6));
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  cursor: pointer;
+  max-width: 175px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.x-axis-select:focus {
+  border-color: var(--accent-cyan);
+  box-shadow: 0 0 0 2px rgba(0, 242, 254, 0.2);
+}
+
+.x-axis-reset-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(0, 242, 254, 0.12);
+  border: 1px solid rgba(0, 242, 254, 0.3);
+  color: var(--accent-cyan);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.x-axis-reset-btn:hover {
+  background: rgba(0, 242, 254, 0.22);
+  border-color: var(--accent-cyan);
 }
 
 .graph-type-selector {

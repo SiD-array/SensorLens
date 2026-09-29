@@ -86,6 +86,24 @@ def test_train_and_compare_models(sample_sensor_df):
     assert best_perf['r2'] > 0.8
     assert best_perf['rmse'] < 0.5
 
+def test_train_and_compare_selected_models(sample_sensor_df):
+    # Only train XGBoost and SVR
+    result = train_and_compare_models(
+        df=sample_sensor_df,
+        target_col='sensor_1',
+        feature_cols=['sensor_2', 'sensor_3'],
+        test_size=0.2,
+        selected_models=['xgboost', 'svr']
+    )
+
+    assert result['success'] is True
+    assert len(result['leaderboard']) == 2
+    assert set(m['key'] for m in result['leaderboard']) == {'xgboost', 'svr'}
+    assert 'xgboost' in result['plot_data']
+    assert 'svr' in result['plot_data']
+    assert 'random_forest' not in result['plot_data']
+    assert 'lightgbm' not in result['plot_data']
+
 def test_api_analytics_endpoints(sample_sensor_df):
     # Upload sample file first to get file_id
     from io import BytesIO

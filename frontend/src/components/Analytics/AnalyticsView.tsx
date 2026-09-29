@@ -7,7 +7,7 @@ import {
   Combine, ArrowUpDown, Check, Target,
   BarChart3, Grid3X3, Wrench, Activity,
   TrendingUp, Gauge, Clock, Sliders,
-  EyeOff, Search, RotateCcw, CheckCircle2, Eye
+  EyeOff, Search, RotateCcw, CheckCircle2, Eye, Info
 } from 'lucide-react';
 import type { TestFile } from '../../types/baseline';
 
@@ -91,9 +91,9 @@ interface LeaderboardItem {
 interface FeatureImportance {
   feature: string;
   importance: number;
-  rf: number;
-  xgb: number;
-  lgb: number;
+  rf?: number;
+  xgb?: number;
+  lgb?: number;
 }
 
 export interface RULResult {
@@ -115,10 +115,27 @@ export interface RULResult {
   total_samples?: number;
 }
 
+export interface MLModelOption {
+  id: string;
+  name: string;
+  badge: string;
+  desc: string;
+}
+
+export const AVAILABLE_ML_MODELS: MLModelOption[] = [
+  { id: 'random_forest', name: 'Random Forest', badge: '100 Trees', desc: 'Ensemble bagging, robust to noise' },
+  { id: 'xgboost', name: 'XGBoost', badge: 'Gradient Boost', desc: 'High accuracy boosted decision trees' },
+  { id: 'lightgbm', name: 'LightGBM', badge: 'Fast Histogram', desc: 'Ultra-fast leaf-wise tree learner' },
+  { id: 'svr', name: 'SVR', badge: 'RBF Kernel', desc: 'Support vector non-linear regressor' },
+  { id: 'elastic_net', name: 'ElasticNet', badge: 'L1 + L2 Regularized', desc: 'Fast regularized linear benchmark' },
+  { id: 'mlp', name: 'MLP Neural Net', badge: 'Deep Learning', desc: 'Multi-layer perceptron network (64, 32)' }
+];
+
 interface MLTrainingResult {
   success: boolean;
   target_col: string;
   feature_cols: string[];
+  selected_models?: string[];
   total_rows: number;
   train_rows: number;
   test_rows: number;
@@ -131,18 +148,18 @@ interface MLTrainingResult {
   plot_data: {
     indices: number[];
     actual: number[];
-    random_forest: number[];
-    xgboost: number[];
-    lightgbm: number[];
+    random_forest?: number[];
+    xgboost?: number[];
+    lightgbm?: number[];
     svr?: number[];
     elastic_net?: number[];
     mlp?: number[];
     test_split_x: number;
   };
   residuals: {
-    random_forest: number[];
-    xgboost: number[];
-    lightgbm: number[];
+    random_forest?: number[];
+    xgboost?: number[];
+    lightgbm?: number[];
     svr?: number[];
     elastic_net?: number[];
     mlp?: number[];
@@ -765,26 +782,51 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
   // 2. ML PREDICTION STUDIO STATE
   // -------------------------------------------------------------
   const [featureSensors, setFeatureSensors] = useState<string[]>([]);
+  const [selectedModels, setSelectedModels] = useState<string[]>([
+    'random_forest',
+    'xgboost',
+    'lightgbm'
+  ]);
   const [splitRatio, setSplitRatio] = useState<number>(0.2); // 80% train / 20% test
   const [isTrainingML, setIsTrainingML] = useState(false);
   const [mlResult, setMlResult] = useState<MLTrainingResult | null>(null);
   const [mlError, setMlError] = useState<string | null>(null);
 
-  // Initialize features when target or columns change
+  // Candidate features sorted by correlation ranking under the active algorithm
+  const sortedCandidateFeatures = useMemo(() => {
+    const raw = numericColumns.filter(c => c !== targetVariable);
+    if (!corrData || Object.keys(activeRankings).length === 0) {
+      return raw;
+    }
+    return [...raw].sort((a, b) => {
+      const rankA = activeRankings[a]?.rank ?? 9999;
+      const rankB = activeRankings[b]?.rank ?? 9999;
+      if (rankA !== rankB) return rankA - rankB;
+      const scoreA = Math.abs(activeRankings[a]?.signed_score ?? activeRankings[a]?.score ?? 0);
+      const scoreB = Math.abs(activeRankings[b]?.signed_score ?? activeRankings[b]?.score ?? 0);
+      return scoreB - scoreA;
+    });
+  }, [numericColumns, targetVariable, activeRankings, corrData]);
+
+  // Initialize features when target, columns, or correlation algorithm rankings change
   useEffect(() => {
     if (numericColumns.length >= 2) {
+      const candidates = numericColumns.filter(c => c !== targetVariable);
       setFeatureSensors(prev => {
-        const valid = prev.filter(c => numericColumns.includes(c) && c !== targetVariable);
+        const valid = prev.filter(c => candidates.includes(c));
         if (valid.length > 0) return valid;
-        return numericColumns.filter(c => c !== targetVariable).slice(0, Math.min(numericColumns.length - 1, 8));
+        if (sortedCandidateFeatures.length > 0 && Object.keys(activeRankings).length > 0) {
+          return sortedCandidateFeatures.slice(0, Math.min(sortedCandidateFeatures.length, 6));
+        }
+        return candidates.slice(0, Math.min(candidates.length, 8));
       });
     } else {
       setFeatureSensors([]);
     }
-  }, [numColsKey, targetVariable]);
+  }, [numColsKey, targetVariable, sortedCandidateFeatures, activeRankings]);
 
   const handleTrainMLModels = async () => {
-    if (selectedFileIds.length === 0 || !targetVariable || featureSensors.length === 0) return;
+    if (selectedFileIds.length === 0 || !targetVariable || featureSensors.length === 0 || selectedModels.length === 0) return;
     setIsTrainingML(true);
     setMlError(null);
 
@@ -797,6 +839,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
       formData.append('target_col', targetVariable);
       formData.append('feature_cols_json', JSON.stringify(featureSensors));
       formData.append('test_size', splitRatio.toString());
+      formData.append('selected_models_json', JSON.stringify(selectedModels));
 
       const res = await fetch('http://localhost:8000/api/analytics/ml-train', {
         method: 'POST',
@@ -1129,6 +1172,102 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
     if (!mlResult) return {};
     const { indices, actual, random_forest, xgboost, lightgbm, svr, elastic_net, mlp, test_split_x } = mlResult.plot_data;
 
+    const legendList: string[] = ['Actual Sensor Trajectory'];
+    const seriesList: any[] = [
+      {
+        name: 'Actual Sensor Trajectory',
+        type: 'line',
+        data: actual,
+        lineStyle: { width: 3, color: '#f8fafc' },
+        itemStyle: { color: '#f8fafc' },
+        smooth: true,
+        symbol: 'none',
+        markLine: test_split_x > 0 ? {
+          symbol: 'none',
+          data: [{ xAxis: test_split_x, label: { formatter: 'Test Split Start', color: '#fbbf24' } }],
+          lineStyle: { color: '#fbbf24', type: 'dashed', width: 2 }
+        } : undefined
+      }
+    ];
+
+    if (random_forest) {
+      legendList.push('Random Forest Prediction');
+      seriesList.push({
+        name: 'Random Forest Prediction',
+        type: 'line',
+        data: random_forest,
+        lineStyle: { width: 2, color: '#38bdf8', type: 'solid' },
+        itemStyle: { color: '#38bdf8' },
+        smooth: true,
+        symbol: 'none'
+      });
+    }
+
+    if (xgboost) {
+      legendList.push('XGBoost Prediction');
+      seriesList.push({
+        name: 'XGBoost Prediction',
+        type: 'line',
+        data: xgboost,
+        lineStyle: { width: 2, color: '#a855f7', type: 'solid' },
+        itemStyle: { color: '#a855f7' },
+        smooth: true,
+        symbol: 'none'
+      });
+    }
+
+    if (lightgbm) {
+      legendList.push('LightGBM Prediction');
+      seriesList.push({
+        name: 'LightGBM Prediction',
+        type: 'line',
+        data: lightgbm,
+        lineStyle: { width: 2, color: '#34d399', type: 'solid' },
+        itemStyle: { color: '#34d399' },
+        smooth: true,
+        symbol: 'none'
+      });
+    }
+
+    if (svr) {
+      legendList.push('SVR Prediction');
+      seriesList.push({
+        name: 'SVR Prediction',
+        type: 'line',
+        data: svr,
+        lineStyle: { width: 2, color: '#f59e0b', type: 'dashed' },
+        itemStyle: { color: '#f59e0b' },
+        smooth: true,
+        symbol: 'none'
+      });
+    }
+
+    if (elastic_net) {
+      legendList.push('ElasticNet Prediction');
+      seriesList.push({
+        name: 'ElasticNet Prediction',
+        type: 'line',
+        data: elastic_net,
+        lineStyle: { width: 2, color: '#ec4899', type: 'dashed' },
+        itemStyle: { color: '#ec4899' },
+        smooth: true,
+        symbol: 'none'
+      });
+    }
+
+    if (mlp) {
+      legendList.push('MLP Neural Net Prediction');
+      seriesList.push({
+        name: 'MLP Neural Net Prediction',
+        type: 'line',
+        data: mlp,
+        lineStyle: { width: 2, color: '#8b5cf6', type: 'dashed' },
+        itemStyle: { color: '#8b5cf6' },
+        smooth: true,
+        symbol: 'none'
+      });
+    }
+
     return {
       backgroundColor: 'transparent',
       tooltip: {
@@ -1138,15 +1277,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
         appendToBody: false
       },
       legend: {
-        data: [
-          'Actual Sensor Trajectory',
-          'Random Forest Prediction',
-          'XGBoost Prediction',
-          'LightGBM Prediction',
-          ...(svr ? ['SVR Prediction'] : []),
-          ...(elastic_net ? ['ElasticNet Prediction'] : []),
-          ...(mlp ? ['MLP Neural Net Prediction'] : [])
-        ],
+        data: legendList,
         textStyle: { color: '#ccc', fontSize: 11 },
         top: 2
       },
@@ -1198,76 +1329,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
         axisLabel: { color: '#aaa' },
         splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.05)' } }
       },
-      series: [
-        {
-          name: 'Actual Sensor Trajectory',
-          type: 'line',
-          data: actual,
-          lineStyle: { width: 3, color: '#f8fafc' },
-          itemStyle: { color: '#f8fafc' },
-          smooth: true,
-          symbol: 'none',
-          markLine: test_split_x > 0 ? {
-            symbol: 'none',
-            data: [{ xAxis: test_split_x, label: { formatter: 'Test Split Start', color: '#fbbf24' } }],
-            lineStyle: { color: '#fbbf24', type: 'dashed', width: 2 }
-          } : undefined
-        },
-        {
-          name: 'Random Forest Prediction',
-          type: 'line',
-          data: random_forest,
-          lineStyle: { width: 2, color: '#38bdf8', type: 'solid' },
-          itemStyle: { color: '#38bdf8' },
-          smooth: true,
-          symbol: 'none'
-        },
-        {
-          name: 'XGBoost Prediction',
-          type: 'line',
-          data: xgboost,
-          lineStyle: { width: 2, color: '#a855f7', type: 'solid' },
-          itemStyle: { color: '#a855f7' },
-          smooth: true,
-          symbol: 'none'
-        },
-        {
-          name: 'LightGBM Prediction',
-          type: 'line',
-          data: lightgbm,
-          lineStyle: { width: 2, color: '#34d399', type: 'solid' },
-          itemStyle: { color: '#34d399' },
-          smooth: true,
-          symbol: 'none'
-        },
-        ...(svr ? [{
-          name: 'SVR Prediction',
-          type: 'line',
-          data: svr,
-          lineStyle: { width: 2, color: '#f59e0b', type: 'dashed' },
-          itemStyle: { color: '#f59e0b' },
-          smooth: true,
-          symbol: 'none'
-        }] : []),
-        ...(elastic_net ? [{
-          name: 'ElasticNet Prediction',
-          type: 'line',
-          data: elastic_net,
-          lineStyle: { width: 2, color: '#ec4899', type: 'dashed' },
-          itemStyle: { color: '#ec4899' },
-          smooth: true,
-          symbol: 'none'
-        }] : []),
-        ...(mlp ? [{
-          name: 'MLP Neural Net Prediction',
-          type: 'line',
-          data: mlp,
-          lineStyle: { width: 2, color: '#8b5cf6', type: 'dashed' },
-          itemStyle: { color: '#8b5cf6' },
-          smooth: true,
-          symbol: 'none'
-        }] : [])
-      ]
+      series: seriesList
     };
   };
 
@@ -2144,29 +2206,121 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
 
             <div className="sidebar-divider" />
 
+            {/* 2. Feature Sensors (Inputs X) - Ranked by Correlation Algorithm */}
             <div className="sidebar-section-header">
-              <span className="section-title">2. Feature Sensors (Inputs X)</span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                <span className="section-title">2. Feature Sensors (Inputs X)</span>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                  Ranked by {selectedCorrAlgo.toUpperCase()} correlation
+                </span>
+              </div>
               <div className="sidebar-quick-btns">
                 <button
-                  onClick={() => setFeatureSensors(numericColumns.filter(c => c !== targetVariable))}
+                  onClick={() => setFeatureSensors(sortedCandidateFeatures)}
                   className="btn-tiny"
-                  disabled={numericColumns.length === 0}
+                  disabled={sortedCandidateFeatures.length === 0}
+                  title="Select all candidate features"
                 >
-                  All Features
+                  All
                 </button>
                 <button
                   onClick={() => setFeatureSensors([])}
                   className="btn-tiny"
+                  title="Clear all features"
                 >
                   Clear
                 </button>
               </div>
             </div>
 
-            {numericColumns.length > 0 && (
-              <div className="corr-channels-scroll" style={{ maxHeight: '200px' }}>
-                {numericColumns.filter(c => c !== targetVariable).map(colName => {
+            {/* Correlation Algorithm Selector & Preset Actions */}
+            <div className="ml-corr-filter-bar">
+              <div className="ml-corr-algo-selector">
+                <span className="ml-corr-algo-label">Algorithm:</span>
+                <select
+                  value={selectedCorrAlgo}
+                  onChange={(e) => setSelectedCorrAlgo(e.target.value as any)}
+                  className="ml-algo-mini-select"
+                  title="Correlation algorithm used to rank features"
+                >
+                  <option value="pearson">Pearson r (Linear)</option>
+                  <option value="spearman">Spearman ρ (Monotonic)</option>
+                  <option value="kendall">Kendall τ (Concordance)</option>
+                  <option value="fastdtw">FastDTW (Time-Lagged)</option>
+                  <option value="mutual_info">Mutual Info (Non-Linear)</option>
+                </select>
+              </div>
+
+              {corrData && Object.keys(activeRankings).length > 0 ? (
+                <div className="ml-corr-quick-pills">
+                  <button
+                    type="button"
+                    onClick={() => setFeatureSensors(sortedCandidateFeatures.slice(0, 5))}
+                    className="ml-quick-driver-btn"
+                    title="Select top 5 drivers by correlation"
+                  >
+                    🎯 Top 5
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFeatureSensors(sortedCandidateFeatures.slice(0, 10))}
+                    className="ml-quick-driver-btn"
+                    title="Select top 10 drivers by correlation"
+                  >
+                    ⚡ Top 10
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const high = sortedCandidateFeatures.filter(c => {
+                        const score = Math.abs(activeRankings[c]?.signed_score ?? activeRankings[c]?.score ?? 0);
+                        return score >= 0.3;
+                      });
+                      setFeatureSensors(high.length > 0 ? high : sortedCandidateFeatures.slice(0, 5));
+                    }}
+                    className="ml-quick-driver-btn"
+                    title="Select all features with absolute correlation >= 0.3"
+                  >
+                    ✨ High Corr (|r|≥0.3)
+                  </button>
+                </div>
+              ) : (
+                <div className="ml-no-corr-banner">
+                  <Info size={12} className="text-accent-cyan" />
+                  <span>No correlation run yet.</span>
+                  <button
+                    type="button"
+                    onClick={() => handleFetchCorrelations()}
+                    disabled={isLoadingCorr}
+                    className="ml-run-corr-link"
+                  >
+                    {isLoadingCorr ? 'Analyzing...' : 'Run Correlation'}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {sortedCandidateFeatures.length > 0 && (
+              <div className="corr-channels-scroll" style={{ maxHeight: '220px' }}>
+                {sortedCandidateFeatures.map(colName => {
                   const isChecked = featureSensors.includes(colName);
+                  const rankInfo = activeRankings[colName];
+                  const score = rankInfo ? (rankInfo.signed_score !== undefined ? rankInfo.signed_score : rankInfo.score) : null;
+                  const absScore = score !== null ? Math.abs(score) : null;
+
+                  let scoreClass = 'corr-score-weak';
+                  if (absScore !== null && absScore >= 0.5) scoreClass = 'corr-score-strong';
+                  else if (absScore !== null && absScore >= 0.25) scoreClass = 'corr-score-moderate';
+
+                  let scoreLabel = '';
+                  if (score !== null) {
+                    if (selectedCorrAlgo === 'pearson') scoreLabel = `r = ${score > 0 ? '+' : ''}${score.toFixed(2)}`;
+                    else if (selectedCorrAlgo === 'spearman') scoreLabel = `ρ = ${score > 0 ? '+' : ''}${score.toFixed(2)}`;
+                    else if (selectedCorrAlgo === 'kendall') scoreLabel = `τ = ${score > 0 ? '+' : ''}${score.toFixed(2)}`;
+                    else if (selectedCorrAlgo === 'fastdtw') scoreLabel = `DTW ${(score * 100).toFixed(0)}%`;
+                    else if (selectedCorrAlgo === 'mutual_info') scoreLabel = `MI ${score.toFixed(2)}`;
+                  }
+
                   return (
                     <label key={colName} className="corr-channel-item">
                       <input
@@ -2182,6 +2336,14 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
                         className="checkbox-custom"
                       />
                       <span className="channel-item-label" title={colName}>{colName}</span>
+                      {rankInfo && (
+                        <div className="sensor-corr-item-meta">
+                          {rankInfo.rank && <span className="sensor-rank-num">#{rankInfo.rank}</span>}
+                          <span className={`sensor-corr-score-pill ${scoreClass}`} title={`Correlation score under ${selectedCorrAlgo.toUpperCase()}: ${score}`}>
+                            {scoreLabel}
+                          </span>
+                        </div>
+                      )}
                     </label>
                   );
                 })}
@@ -2204,6 +2366,85 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
               className="range-input"
             />
 
+            <div className="sidebar-divider" />
+
+            {/* 4. Model Architecture Selection */}
+            <div className="sidebar-section-header">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                <span className="section-title">4. ML Architectures</span>
+                <span style={{ fontSize: '0.7rem', color: selectedModels.length > 0 ? 'var(--accent-cyan)' : 'var(--accent-red)' }}>
+                  {selectedModels.length} of 6 selected
+                </span>
+              </div>
+              <div className="sidebar-quick-btns">
+                <button
+                  type="button"
+                  onClick={() => setSelectedModels(AVAILABLE_ML_MODELS.map(m => m.id))}
+                  className="btn-tiny"
+                  title="Select all 6 machine learning models"
+                >
+                  All 6
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedModels(['random_forest', 'xgboost', 'lightgbm'])}
+                  className="btn-tiny"
+                  title="Select decision tree ensemble models only"
+                >
+                  Trees (3)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedModels(['random_forest', 'xgboost'])}
+                  className="btn-tiny"
+                  title="Select top fast regressors"
+                >
+                  Fast (2)
+                </button>
+              </div>
+            </div>
+
+            <div className="ml-models-selection-list">
+              {AVAILABLE_ML_MODELS.map(model => {
+                const isSelected = selectedModels.includes(model.id);
+                return (
+                  <div
+                    key={model.id}
+                    onClick={() => {
+                      if (isSelected) {
+                        setSelectedModels(selectedModels.filter(m => m !== model.id));
+                      } else {
+                        setSelectedModels([...selectedModels, model.id]);
+                      }
+                    }}
+                    className={`ml-model-select-card ${isSelected ? 'selected' : ''}`}
+                    title={model.desc}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => {}} // handled by card onClick
+                      className="checkbox-custom"
+                    />
+                    <div className="ml-model-card-info">
+                      <div className="ml-model-card-top">
+                        <span className="ml-model-name-text">{model.name}</span>
+                        <span className="ml-model-badge-tag">{model.badge}</span>
+                      </div>
+                      <span className="ml-model-desc-text">{model.desc}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {selectedModels.length === 0 && (
+              <div className="analytics-error-card" style={{ marginTop: '8px', background: 'rgba(239, 68, 68, 0.12)', borderColor: 'rgba(239, 68, 68, 0.3)', color: '#fca5a5' }}>
+                <AlertTriangle size={14} />
+                <span>Please select at least 1 model architecture to train.</span>
+              </div>
+            )}
+
             {mlError && (
               <div className="analytics-error-card">
                 <AlertTriangle size={14} className="text-red-400" />
@@ -2213,11 +2454,11 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
 
             <button
               onClick={handleTrainMLModels}
-              disabled={isTrainingML || !targetVariable || featureSensors.length === 0 || selectedFileIds.length === 0}
+              disabled={isTrainingML || !targetVariable || featureSensors.length === 0 || selectedFileIds.length === 0 || selectedModels.length === 0}
               className="btn btn-primary btn-run-benchmark"
             >
               {isTrainingML ? <RefreshCw className="animate-spin" size={14} /> : <Play size={14} />}
-              <span>Train & Compare Models</span>
+              <span>Train Selected Models ({selectedModels.length})</span>
             </button>
           </aside>
 

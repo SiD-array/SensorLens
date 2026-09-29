@@ -895,13 +895,23 @@ def train_and_compare_models(
     feature_cols: List[str],
     target_col: str,
     test_size: float = 0.2,
-    random_state: int = 42
+    random_state: int = 42,
+    selected_models: Optional[List[str]] = None
 ) -> Dict[str, Any]:
     """
-    Trains Random Forest, XGBoost, and LightGBM regressors on feature sensors
-    to predict target sensor trajectory. Returns comparative metrics,
-    actual vs predicted series, residual distributions, and feature importances.
+    Trains selected regressors (Random Forest, XGBoost, LightGBM, SVR, ElasticNet, MLP)
+    on feature sensors to predict target sensor trajectory. Returns comparative metrics,
+    actual vs predicted series, residual distributions, and feature importances
+    for only the chosen models.
     """
+    ALL_SUPPORTED_MODELS = ["random_forest", "xgboost", "lightgbm", "svr", "elastic_net", "mlp"]
+    if selected_models:
+        active_models = [m for m in selected_models if m in ALL_SUPPORTED_MODELS]
+        if not active_models:
+            active_models = list(ALL_SUPPORTED_MODELS)
+    else:
+        active_models = list(ALL_SUPPORTED_MODELS)
+
     # 1. Preprocess & extract clean numeric dataset
     cols_to_use = feature_cols + [target_col]
     clean_df = df[cols_to_use].copy()
@@ -926,211 +936,237 @@ def train_and_compare_models(
     )
 
     models_data = {}
+    full_preds = {}
+    test_residuals = {}
+
+    # Scaler for distance/gradient models (SVR, ElasticNet, MLP)
+    scaler = None
+    X_train_scaled = None
+    X_test_scaled = None
+    X_scaled = None
+
+    def get_scaled_data():
+        nonlocal scaler, X_train_scaled, X_test_scaled, X_scaled
+        if scaler is None:
+            scaler = StandardScaler()
+            X_train_scaled = scaler.fit_transform(X_train)
+            X_test_scaled = scaler.transform(X_test)
+            X_scaled = scaler.transform(X)
+        return X_train_scaled, X_test_scaled, X_scaled
 
     # --- 1. Random Forest Regressor ---
-    t0 = time.time()
-    rf = RandomForestRegressor(
-        n_estimators=100,
-        max_depth=12,
-        random_state=random_state,
-        n_jobs=-1
-    )
-    rf.fit(X_train, y_train)
-    rf_time_ms = round((time.time() - t0) * 1000, 1)
+    if "random_forest" in active_models:
+        t0 = time.time()
+        rf = RandomForestRegressor(
+            n_estimators=100,
+            max_depth=12,
+            random_state=random_state,
+            n_jobs=-1
+        )
+        rf.fit(X_train, y_train)
+        rf_time_ms = round((time.time() - t0) * 1000, 1)
 
-    rf_pred_test = rf.predict(X_test)
-    rf_r2 = round(float(r2_score(y_test, rf_pred_test)), 4)
-    rf_rmse = round(float(np.sqrt(mean_squared_error(y_test, rf_pred_test))), 4)
-    rf_mae = round(float(mean_absolute_error(y_test, rf_pred_test)), 4)
+        rf_pred_test = rf.predict(X_test)
+        rf_r2 = round(float(r2_score(y_test, rf_pred_test)), 4)
+        rf_rmse = round(float(np.sqrt(mean_squared_error(y_test, rf_pred_test))), 4)
+        rf_mae = round(float(mean_absolute_error(y_test, rf_pred_test)), 4)
 
-    # Normalized feature importance %
-    rf_fi = rf.feature_importances_
-    rf_fi_pct = (rf_fi / max(np.sum(rf_fi), 1e-6) * 100.0).round(2).tolist()
+        rf_fi = rf.feature_importances_
+        rf_fi_pct = (rf_fi / max(np.sum(rf_fi), 1e-6) * 100.0).round(2).tolist()
 
-    models_data["random_forest"] = {
-        "model_name": "Random Forest",
-        "r2": rf_r2,
-        "rmse": rf_rmse,
-        "mae": rf_mae,
-        "train_time_ms": rf_time_ms,
-        "feature_importances": rf_fi_pct,
-        "model_obj": rf
-    }
+        models_data["random_forest"] = {
+            "model_name": "Random Forest",
+            "r2": rf_r2,
+            "rmse": rf_rmse,
+            "mae": rf_mae,
+            "train_time_ms": rf_time_ms,
+            "feature_importances": rf_fi_pct,
+            "model_obj": rf
+        }
+        full_preds["random_forest"] = rf.predict(X)
+        test_residuals["random_forest"] = (y_test - rf_pred_test).tolist()
 
     # --- 2. XGBoost Regressor ---
-    t0 = time.time()
-    xgb_model = xgb.XGBRegressor(
-        n_estimators=100,
-        max_depth=6,
-        learning_rate=0.08,
-        random_state=random_state,
-        n_jobs=-1
-    )
-    xgb_model.fit(X_train, y_train)
-    xgb_time_ms = round((time.time() - t0) * 1000, 1)
+    if "xgboost" in active_models:
+        t0 = time.time()
+        xgb_model = xgb.XGBRegressor(
+            n_estimators=100,
+            max_depth=6,
+            learning_rate=0.08,
+            random_state=random_state,
+            n_jobs=-1
+        )
+        xgb_model.fit(X_train, y_train)
+        xgb_time_ms = round((time.time() - t0) * 1000, 1)
 
-    xgb_pred_test = xgb_model.predict(X_test)
-    xgb_r2 = round(float(r2_score(y_test, xgb_pred_test)), 4)
-    xgb_rmse = round(float(np.sqrt(mean_squared_error(y_test, xgb_pred_test))), 4)
-    xgb_mae = round(float(mean_absolute_error(y_test, xgb_pred_test)), 4)
+        xgb_pred_test = xgb_model.predict(X_test)
+        xgb_r2 = round(float(r2_score(y_test, xgb_pred_test)), 4)
+        xgb_rmse = round(float(np.sqrt(mean_squared_error(y_test, xgb_pred_test))), 4)
+        xgb_mae = round(float(mean_absolute_error(y_test, xgb_pred_test)), 4)
 
-    xgb_fi = xgb_model.feature_importances_
-    xgb_fi_pct = (xgb_fi / max(np.sum(xgb_fi), 1e-6) * 100.0).round(2).tolist()
+        xgb_fi = xgb_model.feature_importances_
+        xgb_fi_pct = (xgb_fi / max(np.sum(xgb_fi), 1e-6) * 100.0).round(2).tolist()
 
-    models_data["xgboost"] = {
-        "model_name": "XGBoost",
-        "r2": xgb_r2,
-        "rmse": xgb_rmse,
-        "mae": xgb_mae,
-        "train_time_ms": xgb_time_ms,
-        "feature_importances": xgb_fi_pct,
-        "model_obj": xgb_model
-    }
+        models_data["xgboost"] = {
+            "model_name": "XGBoost",
+            "r2": xgb_r2,
+            "rmse": xgb_rmse,
+            "mae": xgb_mae,
+            "train_time_ms": xgb_time_ms,
+            "feature_importances": xgb_fi_pct,
+            "model_obj": xgb_model
+        }
+        full_preds["xgboost"] = xgb_model.predict(X)
+        test_residuals["xgboost"] = (y_test - xgb_pred_test).tolist()
 
     # --- 3. LightGBM Regressor ---
-    t0 = time.time()
-    lgb_model = lgb.LGBMRegressor(
-        n_estimators=100,
-        max_depth=6,
-        learning_rate=0.08,
-        random_state=random_state,
-        verbose=-1,
-        n_jobs=-1
-    )
-    lgb_model.fit(X_train, y_train)
-    lgb_time_ms = round((time.time() - t0) * 1000, 1)
+    if "lightgbm" in active_models:
+        t0 = time.time()
+        lgb_model = lgb.LGBMRegressor(
+            n_estimators=100,
+            max_depth=6,
+            learning_rate=0.08,
+            random_state=random_state,
+            verbose=-1,
+            n_jobs=-1
+        )
+        lgb_model.fit(X_train, y_train)
+        lgb_time_ms = round((time.time() - t0) * 1000, 1)
 
-    lgb_pred_test = lgb_model.predict(X_test)
-    lgb_r2 = round(float(r2_score(y_test, lgb_pred_test)), 4)
-    lgb_rmse = round(float(np.sqrt(mean_squared_error(y_test, lgb_pred_test))), 4)
-    lgb_mae = round(float(mean_absolute_error(y_test, lgb_pred_test)), 4)
+        lgb_pred_test = lgb_model.predict(X_test)
+        lgb_r2 = round(float(r2_score(y_test, lgb_pred_test)), 4)
+        lgb_rmse = round(float(np.sqrt(mean_squared_error(y_test, lgb_pred_test))), 4)
+        lgb_mae = round(float(mean_absolute_error(y_test, lgb_pred_test)), 4)
 
-    lgb_fi = lgb_model.feature_importances_
-    lgb_fi_pct = (lgb_fi / max(np.sum(lgb_fi), 1e-6) * 100.0).round(2).tolist()
+        lgb_fi = lgb_model.feature_importances_
+        lgb_fi_pct = (lgb_fi / max(np.sum(lgb_fi), 1e-6) * 100.0).round(2).tolist()
 
-    models_data["lightgbm"] = {
-        "model_name": "LightGBM",
-        "r2": lgb_r2,
-        "rmse": lgb_rmse,
-        "mae": lgb_mae,
-        "train_time_ms": lgb_time_ms,
-        "feature_importances": lgb_fi_pct,
-        "model_obj": lgb_model
-    }
+        models_data["lightgbm"] = {
+            "model_name": "LightGBM",
+            "r2": lgb_r2,
+            "rmse": lgb_rmse,
+            "mae": lgb_mae,
+            "train_time_ms": lgb_time_ms,
+            "feature_importances": lgb_fi_pct,
+            "model_obj": lgb_model
+        }
+        full_preds["lightgbm"] = lgb_model.predict(X)
+        test_residuals["lightgbm"] = (y_test - lgb_pred_test).tolist()
 
     # --- 4. Support Vector Regressor (SVR) ---
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
-    X_scaled = scaler.transform(X)
+    if "svr" in active_models:
+        tr_scaled, te_scaled, f_scaled = get_scaled_data()
+        t0 = time.time()
+        svr_model = SVR(kernel="rbf", C=10.0, epsilon=0.05)
+        svr_model.fit(tr_scaled, y_train)
+        svr_time_ms = round((time.time() - t0) * 1000, 1)
 
-    t0 = time.time()
-    svr_model = SVR(kernel="rbf", C=10.0, epsilon=0.05)
-    svr_model.fit(X_train_scaled, y_train)
-    svr_time_ms = round((time.time() - t0) * 1000, 1)
+        svr_pred_test = svr_model.predict(te_scaled)
+        svr_r2 = round(float(r2_score(y_test, svr_pred_test)), 4)
+        svr_rmse = round(float(np.sqrt(mean_squared_error(y_test, svr_pred_test))), 4)
+        svr_mae = round(float(mean_absolute_error(y_test, svr_pred_test)), 4)
 
-    svr_pred_test = svr_model.predict(X_test_scaled)
-    svr_r2 = round(float(r2_score(y_test, svr_pred_test)), 4)
-    svr_rmse = round(float(np.sqrt(mean_squared_error(y_test, svr_pred_test))), 4)
-    svr_mae = round(float(mean_absolute_error(y_test, svr_pred_test)), 4)
-
-    models_data["svr"] = {
-        "model_name": "Support Vector Regression (SVR)",
-        "r2": svr_r2,
-        "rmse": svr_rmse,
-        "mae": svr_mae,
-        "train_time_ms": svr_time_ms,
-        "model_obj": svr_model
-    }
+        models_data["svr"] = {
+            "model_name": "Support Vector Regression (SVR)",
+            "r2": svr_r2,
+            "rmse": svr_rmse,
+            "mae": svr_mae,
+            "train_time_ms": svr_time_ms,
+            "model_obj": svr_model
+        }
+        full_preds["svr"] = svr_model.predict(f_scaled)
+        test_residuals["svr"] = (y_test - svr_pred_test).tolist()
 
     # --- 5. ElasticNet Regularized Linear Regressor ---
-    t0 = time.time()
-    en_model = ElasticNet(alpha=0.05, l1_ratio=0.5, max_iter=1000, random_state=random_state)
-    en_model.fit(X_train_scaled, y_train)
-    en_time_ms = round((time.time() - t0) * 1000, 1)
+    if "elastic_net" in active_models:
+        tr_scaled, te_scaled, f_scaled = get_scaled_data()
+        t0 = time.time()
+        en_model = ElasticNet(alpha=0.05, l1_ratio=0.5, max_iter=1000, random_state=random_state)
+        en_model.fit(tr_scaled, y_train)
+        en_time_ms = round((time.time() - t0) * 1000, 1)
 
-    en_pred_test = en_model.predict(X_test_scaled)
-    en_r2 = round(float(r2_score(y_test, en_pred_test)), 4)
-    en_rmse = round(float(np.sqrt(mean_squared_error(y_test, en_pred_test))), 4)
-    en_mae = round(float(mean_absolute_error(y_test, en_pred_test)), 4)
+        en_pred_test = en_model.predict(te_scaled)
+        en_r2 = round(float(r2_score(y_test, en_pred_test)), 4)
+        en_rmse = round(float(np.sqrt(mean_squared_error(y_test, en_pred_test))), 4)
+        en_mae = round(float(mean_absolute_error(y_test, en_pred_test)), 4)
 
-    models_data["elastic_net"] = {
-        "model_name": "ElasticNet Regularized Linear",
-        "r2": en_r2,
-        "rmse": en_rmse,
-        "mae": en_mae,
-        "train_time_ms": en_time_ms,
-        "model_obj": en_model
-    }
+        models_data["elastic_net"] = {
+            "model_name": "ElasticNet Regularized Linear",
+            "r2": en_r2,
+            "rmse": en_rmse,
+            "mae": en_mae,
+            "train_time_ms": en_time_ms,
+            "model_obj": en_model
+        }
+        full_preds["elastic_net"] = en_model.predict(f_scaled)
+        test_residuals["elastic_net"] = (y_test - en_pred_test).tolist()
 
     # --- 6. Multi-Layer Perceptron (MLP Neural Net) ---
-    t0 = time.time()
-    mlp_model = MLPRegressor(hidden_layer_sizes=(64, 32), max_iter=300, random_state=random_state, early_stopping=True)
-    mlp_model.fit(X_train_scaled, y_train)
-    mlp_time_ms = round((time.time() - t0) * 1000, 1)
+    if "mlp" in active_models:
+        tr_scaled, te_scaled, f_scaled = get_scaled_data()
+        t0 = time.time()
+        mlp_model = MLPRegressor(hidden_layer_sizes=(64, 32), max_iter=300, random_state=random_state, early_stopping=True)
+        mlp_model.fit(tr_scaled, y_train)
+        mlp_time_ms = round((time.time() - t0) * 1000, 1)
 
-    mlp_pred_test = mlp_model.predict(X_test_scaled)
-    mlp_r2 = round(float(r2_score(y_test, mlp_pred_test)), 4)
-    mlp_rmse = round(float(np.sqrt(mean_squared_error(y_test, mlp_pred_test))), 4)
-    mlp_mae = round(float(mean_absolute_error(y_test, mlp_pred_test)), 4)
+        mlp_pred_test = mlp_model.predict(te_scaled)
+        mlp_r2 = round(float(r2_score(y_test, mlp_pred_test)), 4)
+        mlp_rmse = round(float(np.sqrt(mean_squared_error(y_test, mlp_pred_test))), 4)
+        mlp_mae = round(float(mean_absolute_error(y_test, mlp_pred_test)), 4)
 
-    models_data["mlp"] = {
-        "model_name": "MLP Neural Network",
-        "r2": mlp_r2,
-        "rmse": mlp_rmse,
-        "mae": mlp_mae,
-        "train_time_ms": mlp_time_ms,
-        "model_obj": mlp_model
-    }
-
-    # Predict full dataset trajectories for visualization (downsampled to max 500 pts)
-    rf_full = rf.predict(X)
-    xgb_full = xgb_model.predict(X)
-    lgb_full = lgb_model.predict(X)
-    svr_full = svr_model.predict(X_scaled)
-    en_full = en_model.predict(X_scaled)
-    mlp_full = mlp_model.predict(X_scaled)
+        models_data["mlp"] = {
+            "model_name": "MLP Neural Network",
+            "r2": mlp_r2,
+            "rmse": mlp_rmse,
+            "mae": mlp_mae,
+            "train_time_ms": mlp_time_ms,
+            "model_obj": mlp_model
+        }
+        full_preds["mlp"] = mlp_model.predict(f_scaled)
+        test_residuals["mlp"] = (y_test - mlp_pred_test).tolist()
 
     total_pts = len(y)
     step = max(1, total_pts // 500)
     indices = list(range(0, total_pts, step))
-
     actual_series = [round(float(y[i]), 3) for i in indices]
-    rf_series = [round(float(rf_full[i]), 3) for i in indices]
-    xgb_series = [round(float(xgb_full[i]), 3) for i in indices]
-    lgb_series = [round(float(lgb_full[i]), 3) for i in indices]
-    svr_series = [round(float(svr_full[i]), 3) for i in indices]
-    en_series = [round(float(en_full[i]), 3) for i in indices]
-    mlp_series = [round(float(mlp_full[i]), 3) for i in indices]
 
     # Split marker index (where test set begins in downsampled sequence)
     test_start_orig = len(X_train)
     split_index = int(test_start_orig // step)
 
-    # Residual distributions on test set
-    rf_residuals = (y_test - rf_pred_test).tolist()
-    xgb_residuals = (y_test - xgb_pred_test).tolist()
-    lgb_residuals = (y_test - lgb_pred_test).tolist()
-    svr_residuals = (y_test - svr_pred_test).tolist()
-    en_residuals = (y_test - en_pred_test).tolist()
-    mlp_residuals = (y_test - mlp_pred_test).tolist()
+    # Determine champion model (highest R2 among evaluated models)
+    candidates = [k for k in ALL_SUPPORTED_MODELS if k in models_data]
+    if not candidates:
+        raise ValueError("No models were successfully trained.")
 
-    # Determine champion model (highest R2, lowest RMSE)
-    candidates = ["random_forest", "xgboost", "lightgbm", "svr", "elastic_net", "mlp"]
     champion_key = max(candidates, key=lambda k: models_data[k]["r2"])
 
-    # Average feature importance across tree models
+    # Average feature importance across trained tree models
     avg_fi = []
-    for idx, f in enumerate(feature_cols):
-        avg_val = (rf_fi_pct[idx] + xgb_fi_pct[idx] + lgb_fi_pct[idx]) / 3.0
-        avg_fi.append({
-            "feature": f,
-            "importance": round(avg_val, 2),
-            "rf": rf_fi_pct[idx],
-            "xgb": xgb_fi_pct[idx],
-            "lgb": lgb_fi_pct[idx]
-        })
-    avg_fi.sort(key=lambda x: x["importance"], reverse=True)
+    tree_models_trained = [k for k in ["random_forest", "xgboost", "lightgbm"] if k in models_data]
+    if tree_models_trained:
+        for idx, f in enumerate(feature_cols):
+            scores = [models_data[k]["feature_importances"][idx] for k in tree_models_trained]
+            avg_val = sum(scores) / len(scores)
+            item = {
+                "feature": f,
+                "importance": round(avg_val, 2)
+            }
+            if "random_forest" in models_data:
+                item["rf"] = models_data["random_forest"]["feature_importances"][idx]
+            if "xgboost" in models_data:
+                item["xgb"] = models_data["xgboost"]["feature_importances"][idx]
+            if "lightgbm" in models_data:
+                item["lgb"] = models_data["lightgbm"]["feature_importances"][idx]
+            avg_fi.append(item)
+        avg_fi.sort(key=lambda x: x["importance"], reverse=True)
+    else:
+        # Fallback if only linear/SVR/MLP were trained
+        for f in feature_cols:
+            avg_fi.append({
+                "feature": f,
+                "importance": round(100.0 / max(len(feature_cols), 1), 2)
+            })
 
     leaderboard = [
         {
@@ -1146,10 +1182,25 @@ def train_and_compare_models(
     ]
     leaderboard.sort(key=lambda x: x["r2"], reverse=True)
 
+    plot_data_res: Dict[str, Any] = {
+        "indices": indices,
+        "actual": actual_series,
+        "test_split_x": split_index
+    }
+    for k in candidates:
+        if k in full_preds:
+            plot_data_res[k] = [round(float(full_preds[k][i]), 3) for i in indices]
+
+    residuals_res: Dict[str, Any] = {}
+    for k in candidates:
+        if k in test_residuals:
+            residuals_res[k] = test_residuals[k][:200]
+
     return {
         "success": True,
         "target_col": target_col,
         "feature_cols": feature_cols,
+        "selected_models": candidates,
         "total_rows": total_pts,
         "train_rows": len(X_train),
         "test_rows": len(X_test),
@@ -1157,25 +1208,8 @@ def train_and_compare_models(
         "champion": models_data[champion_key]["model_name"],
         "leaderboard": leaderboard,
         "feature_importance_ranking": avg_fi,
-        "plot_data": {
-            "indices": indices,
-            "actual": actual_series,
-            "random_forest": rf_series,
-            "xgboost": xgb_series,
-            "lightgbm": lgb_series,
-            "svr": svr_series,
-            "elastic_net": en_series,
-            "mlp": mlp_series,
-            "test_split_x": split_index
-        },
-        "residuals": {
-            "random_forest": rf_residuals[:200],
-            "xgboost": xgb_residuals[:200],
-            "lightgbm": lgb_residuals[:200],
-            "svr": svr_residuals[:200],
-            "elastic_net": en_residuals[:200],
-            "mlp": mlp_residuals[:200]
-        }
+        "plot_data": plot_data_res,
+        "residuals": residuals_res
     }
 
 

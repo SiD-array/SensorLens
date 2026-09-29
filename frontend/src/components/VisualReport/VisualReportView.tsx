@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import ReactECharts from 'echarts-for-react';
-import { Activity, Sparkles, SlidersHorizontal, Info, Download } from 'lucide-react';
+import { Activity, Sparkles, SlidersHorizontal, Info, Download, RotateCcw, Clock } from 'lucide-react';
 import type { TestFile } from '../../types/baseline';
 import { SensorSelector } from './SensorSelector';
 import type { SelectedPlotCol } from './SensorSelector';
@@ -20,6 +20,18 @@ export const VisualReportView: React.FC<VisualReportViewProps> = ({
   onChangeSelectedPlotCols
 }) => {
   const [chartType, setChartType] = useState<'line' | 'scatter' | 'bar'>('line');
+  const [xAxisSensor, setXAxisSensor] = useState<string>('__time__');
+
+  // Collect all available numeric sensors across uploaded runs
+  const availableSensors = useMemo(() => {
+    const sensorSet = new Set<string>();
+    files.forEach(f => {
+      f.columns.filter(c => c.type === 'numeric').forEach(c => {
+        sensorSet.add(c.name);
+      });
+    });
+    return Array.from(sensorSet).sort();
+  }, [files]);
 
   // Compute summary metrics across plotted channels
   const summaryMetrics = useMemo(() => {
@@ -64,11 +76,20 @@ export const VisualReportView: React.FC<VisualReportViewProps> = ({
       })
     );
 
-    const headers = ['Time_Step', ...selectedPlotCols.map(s => `${s.fileName || s.fileId}_${s.colName}`)];
+    const xHeader = xAxisSensor === '__time__' ? 'Time_Step' : `X_${xAxisSensor}`;
+    const headers = [xHeader, ...selectedPlotCols.map(s => `${s.fileName || s.fileId}_${s.colName}`)];
     const rows: (string | number)[][] = [];
 
+    // Fallback file for X sensor if needed
+    const fallbackXFile = xAxisSensor !== '__time__' ? files.find(f => f.columns.some(c => c.name === xAxisSensor)) : null;
+    const fallbackXCol = fallbackXFile?.columns.find(c => c.name === xAxisSensor);
+
     for (let i = 0; i < maxPts; i++) {
-      const row: (string | number)[] = [i];
+      let xVal: number | string = i;
+      if (xAxisSensor !== '__time__') {
+        xVal = fallbackXCol?.sparkline[i] !== undefined ? fallbackXCol.sparkline[i] : i;
+      }
+      const row: (string | number)[] = [xVal];
       selectedPlotCols.forEach(sel => {
         const file = files.find(f => f.id === sel.fileId);
         const col = file?.columns.find(c => c.name === sel.colName);
@@ -124,6 +145,11 @@ export const VisualReportView: React.FC<VisualReportViewProps> = ({
     const legendNames: string[] = [];
     const seriesList: any[] = [];
 
+    // Global fallback for X-axis sensor if a specific file doesn't have it
+    const globalXCol = xAxisSensor !== '__time__'
+      ? files.flatMap(f => f.columns).find(c => c.name === xAxisSensor)
+      : null;
+
     selectedPlotCols.forEach((sel, idx) => {
       const file = files.find(f => f.id === sel.fileId);
       if (!file) return;
@@ -134,7 +160,18 @@ export const VisualReportView: React.FC<VisualReportViewProps> = ({
       legendNames.push(seriesName);
 
       const color = getChannelColor(idx);
-      const dataPoints = col.sparkline.map((val, ptIdx) => [ptIdx, val]);
+      
+      // Resolve X values: Time index (default) or sensor values from the file
+      let dataPoints: [number, number][];
+      if (xAxisSensor === '__time__') {
+        dataPoints = col.sparkline.map((val, ptIdx) => [ptIdx, val]);
+      } else {
+        const fileXCol = file.columns.find(c => c.name === xAxisSensor) || globalXCol;
+        dataPoints = col.sparkline.map((val, ptIdx) => {
+          const xVal = fileXCol?.sparkline[ptIdx] !== undefined ? fileXCol.sparkline[ptIdx] : ptIdx;
+          return [xVal, val];
+        });
+      }
 
       seriesList.push({
         name: seriesName,
@@ -157,12 +194,26 @@ export const VisualReportView: React.FC<VisualReportViewProps> = ({
       });
     });
 
+    const isTimeX = xAxisSensor === '__time__';
+    const xAxisTitle = isTimeX 
+      ? 'Time [Sample Index]' 
+      : `${xAxisSensor} [Sensor Reading]`;
+
     return {
       ...SENSORLENS_CHART_THEME,
       tooltip: {
         ...SENSORLENS_CHART_THEME.tooltip,
-        trigger: 'axis',
-        axisPointer: { type: 'cross', lineStyle: { color: '#00f2fe', type: 'dashed' } }
+        trigger: isTimeX ? 'axis' : 'item',
+        axisPointer: { type: 'cross', lineStyle: { color: '#00f2fe', type: 'dashed' } },
+        formatter: isTimeX ? undefined : (params: any) => {
+          const valX = Array.isArray(params.value) ? params.value[0] : params.value;
+          const valY = Array.isArray(params.value) ? params.value[1] : '';
+          return `<div style="font-size:12px;padding:3px 6px;line-height:1.5">
+            <div style="font-weight:600;color:#00f2fe;margin-bottom:2px">${params.seriesName}</div>
+            <div style="color:#94a3b8">X (${xAxisSensor}): <b style="color:var(--text-primary, #fff)">${typeof valX === 'number' ? valX.toFixed(3) : valX}</b></div>
+            <div style="color:#94a3b8">Y (Value): <b style="color:var(--text-primary, #fff)">${typeof valY === 'number' ? valY.toFixed(3) : valY}</b></div>
+          </div>`;
+        }
       },
       legend: {
         data: legendNames,
@@ -213,7 +264,7 @@ export const VisualReportView: React.FC<VisualReportViewProps> = ({
       xAxis: {
         ...SENSORLENS_CHART_THEME.xAxis,
         type: 'value',
-        name: 'Sample Index [Steps]',
+        name: xAxisTitle,
         nameTextStyle: { color: '#94a3b8', fontSize: 12 },
         axisLabel: { color: '#94a3b8', fontSize: 12, fontFamily: 'JetBrains Mono, monospace' },
       },
@@ -270,6 +321,36 @@ export const VisualReportView: React.FC<VisualReportViewProps> = ({
           </div>
 
           <div className="stage-controls-group">
+            {/* X-Axis Selector Dropdown */}
+            <div className="x-axis-selector-wrapper">
+              <label htmlFor="visual-xaxis-select" className="x-axis-selector-label">
+                <Clock size={12} className="text-accent-cyan" />
+                <span>X-Axis:</span>
+              </label>
+              <select
+                id="visual-xaxis-select"
+                value={xAxisSensor}
+                onChange={(e) => setXAxisSensor(e.target.value)}
+                className="x-axis-select"
+                title="Select horizontal X-axis: Time or any sensor from uploaded runs"
+              >
+                <option value="__time__">⏱️ Time [Sample Index] (Default)</option>
+                {availableSensors.map(sensor => (
+                  <option key={sensor} value={sensor}>📈 {sensor}</option>
+                ))}
+              </select>
+              {xAxisSensor !== '__time__' && (
+                <button
+                  onClick={() => setXAxisSensor('__time__')}
+                  className="x-axis-reset-btn"
+                  title="Reset horizontal axis to Time (Sample Index)"
+                >
+                  <RotateCcw size={12} />
+                  <span>Time</span>
+                </button>
+              )}
+            </div>
+
             <Button
               variant="secondary"
               size="sm"

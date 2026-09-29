@@ -2682,6 +2682,241 @@
   border-color: rgba(2, 132, 199, 0.22);
 }
 
+/* ========================================================================= */
+/* ML STUDIO: CORRELATION-BASED FEATURES & MODEL SELECTION STYLING           */
+/* ========================================================================= */
+
+.ml-corr-filter-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 8px;
+  padding: 8px;
+  margin-bottom: 8px;
+}
+
+.ml-corr-algo-selector {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+}
+
+.ml-corr-algo-label {
+  color: var(--text-muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ml-algo-mini-select {
+  flex: 1;
+  background: var(--surface-card, rgba(15, 23, 42, 0.6));
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.ml-algo-mini-select:focus {
+  border-color: var(--accent-cyan);
+}
+
+.ml-corr-quick-pills {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.ml-quick-driver-btn {
+  background: rgba(0, 242, 254, 0.08);
+  border: 1px solid rgba(0, 242, 254, 0.25);
+  color: var(--accent-cyan);
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.ml-quick-driver-btn:hover {
+  background: rgba(0, 242, 254, 0.18);
+  border-color: var(--accent-cyan);
+}
+
+.ml-no-corr-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.ml-run-corr-link {
+  background: none;
+  border: none;
+  color: var(--accent-cyan);
+  font-weight: 600;
+  font-size: 0.7rem;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+  margin-left: auto;
+}
+
+.ml-run-corr-link:hover {
+  color: #38bdf8;
+}
+
+/* Feature Item Correlation Badges */
+.sensor-corr-item-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.sensor-rank-num {
+  font-size: 0.65rem;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  color: #94a3b8;
+  padding: 1px 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+}
+
+.sensor-corr-score-pill {
+  font-size: 0.65rem;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  padding: 1px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.sensor-corr-score-pill.corr-score-strong {
+  background: rgba(52, 211, 153, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(52, 211, 153, 0.3);
+}
+
+.sensor-corr-score-pill.corr-score-moderate {
+  background: rgba(0, 242, 254, 0.12);
+  color: #38bdf8;
+  border: 1px solid rgba(0, 242, 254, 0.25);
+}
+
+.sensor-corr-score-pill.corr-score-weak {
+  background: rgba(148, 163, 184, 0.12);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+/* Model Architecture Cards */
+.ml-models-selection-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 4px;
+}
+
+.ml-model-select-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.ml-model-select-card:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.ml-model-select-card.selected {
+  background: rgba(0, 242, 254, 0.08);
+  border-color: rgba(0, 242, 254, 0.4);
+}
+
+.ml-model-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+.ml-model-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.ml-model-name-text {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.ml-model-badge-tag {
+  font-size: 0.62rem;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(99, 102, 241, 0.18);
+  color: #a5b4fc;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+.ml-model-desc-text {
+  font-size: 0.66rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Light Mode Overrides */
+[data-theme="light"] .ml-corr-filter-bar {
+  background: #f8fafc;
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .ml-model-select-card {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .ml-model-select-card:hover {
+  background: #f1f5f9;
+  border-color: rgba(0, 0, 0, 0.18);
+}
+
+[data-theme="light"] .ml-model-select-card.selected {
+  background: rgba(2, 132, 199, 0.08);
+  border-color: rgba(2, 132, 199, 0.5);
+}
+
+[data-theme="light"] .sensor-rank-num {
+  background: rgba(0, 0, 0, 0.06);
+  color: #475569;
+}
+
 
 
 

@@ -282,11 +282,12 @@ async def ml_train_endpoint(
     file: Optional[UploadFile] = File(None),
     feature_cols_json: str = Form(...),
     target_col: str = Form(...),
-    test_size: float = Form(0.2)
+    test_size: float = Form(0.2),
+    selected_models_json: Optional[str] = Form(None)
 ):
     """
-    Trains and compares Random Forest, XGBoost, and LightGBM regressors
-    on selected feature sensors to predict target variable trajectory
+    Trains and compares user-selected regressors (Random Forest, XGBoost, LightGBM, SVR,
+    ElasticNet, MLP) on feature sensors to predict target variable trajectory
     across one or multiple pooled test runs.
     """
     from main import uploaded_files_cache
@@ -302,6 +303,15 @@ async def ml_train_endpoint(
 
     if not feature_cols:
         raise HTTPException(status_code=400, detail="At least 1 feature sensor column must be selected.")
+
+    selected_models = None
+    if selected_models_json:
+        try:
+            selected_models = json.loads(selected_models_json)
+            if not isinstance(selected_models, list):
+                selected_models = None
+        except Exception:
+            selected_models = None
 
     all_needed = list(set(feature_cols + [target_col]))
     pooled_df, common_cols = pool_datasets(dfs, all_needed)
@@ -321,7 +331,8 @@ async def ml_train_endpoint(
             df=pooled_df,
             feature_cols=feature_cols,
             target_col=target_col,
-            test_size=test_size
+            test_size=test_size,
+            selected_models=selected_models
         )
         result["total_runs"] = len(dfs)
         result["total_samples"] = len(pooled_df)
