@@ -131,6 +131,173 @@ export const AVAILABLE_ML_MODELS: MLModelOption[] = [
   { id: 'mlp', name: 'MLP Neural Net', badge: 'Deep Learning', desc: 'Multi-layer perceptron network (64, 32)' }
 ];
 
+export interface MLModelDetail {
+  id: string;
+  name: string;
+  badge: string;
+  tagline: string;
+  whatItIs: string;
+  howItWorks: string[];
+  sensorExample: {
+    scenario: string;
+    inputs: string;
+    prediction: string;
+    outcome: string;
+  };
+  pros: string[];
+  idealFor: string;
+}
+
+export const ML_MODEL_DETAILS: Record<string, MLModelDetail> = {
+  random_forest: {
+    id: 'random_forest',
+    name: 'Random Forest Regressor',
+    badge: '100 Trees Ensemble',
+    tagline: 'A crowd of decision trees voting together to eliminate sensor noise and errors.',
+    whatItIs: 'Imagine asking 100 experienced engineers to predict a sensor reading based on different subsets of gauges. While any single engineer might get misled by a glitchy sensor, taking their collective average produces a reliable, smooth prediction. That is Random Forest.',
+    howItWorks: [
+      'Builds 100 independent decision trees in parallel.',
+      'Each tree only sees a random sample of rows and a random subset of sensor channels (e.g. 3 out of 10 sensors per split).',
+      'Each tree makes its own prediction independently.',
+      'The final forecast is the combined average of all 100 trees, which cancels out random noise.'
+    ],
+    sensorExample: {
+      scenario: 'Predicting motor winding temperature during dynamic acceleration test runs.',
+      inputs: 'Motor RPM, Inverter Current (Amps), Ambient Air Temp, Coolant Flow Rate.',
+      prediction: 'Winding Temp (°C)',
+      outcome: 'If the coolant flow sensor has an electrical glitch or brief spike, 90+ other trees ignore it and rely on current and RPM, keeping the predicted temperature smooth and accurate.'
+    },
+    pros: [
+      'Handles noisy sensor signals and outliers exceptionally well',
+      'Does not require feature scaling or normalization',
+      'Provides accurate Feature Importance rankings across channels'
+    ],
+    idealFor: 'Baseline modeling, noisy sensor datasets, and systems with correlated or redundant channels.'
+  },
+  xgboost: {
+    id: 'xgboost',
+    name: 'XGBoost (Extreme Gradient Boosting)',
+    badge: 'Gradient Boosted Trees',
+    tagline: 'An elite team of trees where each new tree is trained to fix the exact mistakes of the previous ones.',
+    whatItIs: 'XGBoost is one of the most successful algorithms in machine learning competitions. Instead of building trees independently, it builds them in a relay race: each new tree targets the remaining prediction errors (residuals) of all previous trees, refining accuracy to pinpoint precision.',
+    howItWorks: [
+      'Starts with an initial baseline prediction (e.g. the average sensor reading).',
+      'Calculates the residual error (Actual Value − Predicted Value) for every time step.',
+      'Trains a new shallow decision tree specifically focused on predicting those errors.',
+      'Multiplies the new tree’s contribution by a small learning rate (shrinkage) and repeats this 100 times to avoid overreacting to anomalies.'
+    ],
+    sensorExample: {
+      scenario: 'Predicting turbocharger boost pressure across complex transient throttle maneuvers.',
+      inputs: 'Throttle Position (%), Engine RPM, Mass Airflow (MAF), Exhaust Gas Temp.',
+      prediction: 'Turbo Boost Pressure (bar)',
+      outcome: 'The first few trees capture the broad relationship between throttle and boost. Later trees specialize in subtle non-linear phenomena, such as turbo lag during rapid acceleration.'
+    },
+    pros: [
+      'State-of-the-art predictive accuracy on tabular sensor logs',
+      'Built-in regularizers (L1/L2 penalties) prevent overfitting sharp sensor peaks',
+      'Fast parallel histogram computation'
+    ],
+    idealFor: 'Complex non-linear sensor curves, transient test cycles, and high-accuracy telemetry modeling.'
+  },
+  lightgbm: {
+    id: 'lightgbm',
+    name: 'LightGBM (Light Gradient Boosting)',
+    badge: 'Fast Histogram Boosting',
+    tagline: 'Ultra-fast boosting optimized for large, high-frequency continuous telemetry streams.',
+    whatItIs: 'Developed by Microsoft, LightGBM delivers the accuracy of gradient boosted trees at 5× to 10× faster training speeds. It achieves this by bundling continuous numbers into 256 compact buckets (histograms) and splitting trees leaf-by-leaf rather than level-by-level.',
+    howItWorks: [
+      'Discretizes floating-point sensor readings into 256 discrete bins, drastically speeding up memory access.',
+      'Splits the single leaf node that yields the greatest error reduction (leaf-wise growth) rather than expanding all branches uniformly.',
+      'Filters out samples with small gradients using GOSS (Gradient-based One-Side Sampling), focusing computation on the most difficult patterns.'
+    ],
+    sensorExample: {
+      scenario: 'Predicting high-pressure fuel rail degradation from 500,000 telemetry samples at 50Hz.',
+      inputs: 'Fuel Rail Pressure, Pump PWM Duty Cycle, Fuel Temp, Vehicle Speed.',
+      prediction: 'Actual Fuel Delivery Rate (L/h)',
+      outcome: 'Trains in milliseconds across hundreds of thousands of data points while capturing sudden pressure drops during rapid gear changes without freezing the browser or server.'
+    },
+    pros: [
+      'Blazing fast training on large sensor datasets (>100k rows)',
+      'Extremely low memory footprint',
+      'High accuracy comparable to XGBoost'
+    ],
+    idealFor: 'High-frequency telemetry (50Hz–1000Hz), large multi-run datasets, and rapid exploratory iteration.'
+  },
+  svr: {
+    id: 'svr',
+    name: 'Support Vector Regression (SVR)',
+    badge: 'RBF Non-Linear Kernel',
+    tagline: 'Fits a flexible margin tube along physical sensor dynamics, ignoring minor noise within the tube.',
+    whatItIs: 'Support Vector Regression finds a smooth mathematical surface that fits through your sensor data within an error margin tube (called the ε-tube). Small fluctuations inside the tube are completely ignored as normal noise, and only points that fall outside (the support vectors) guide the model.',
+    howItWorks: [
+      'Normalizes all sensor channels using standard scaling so channels with big numbers (like RPM) do not overpower small ones (like Voltage).',
+      'Projects sensor inputs into a high-dimensional space using an RBF (Radial Basis Function) kernel to model smooth curved relationships.',
+      'Penalizes deviations only if they exceed the tolerance band ε, making the fit resilient to micro-jitter.'
+    ],
+    sensorExample: {
+      scenario: 'Modeling hydraulic actuator position based on fluid temperature and command pressure.',
+      inputs: 'Command Pressure (bar), Fluid Viscosity, Hydraulic Fluid Temp (°C).',
+      prediction: 'Actuator Stroke Position (mm)',
+      outcome: 'Normal sensor measurement jitter within ±0.05 mm is filtered out inside the ε-tube, while the model fits a smooth continuous curve capturing the physical response of the piston.'
+    },
+    pros: [
+      'Excellent for smooth physical dynamics and continuous sensor responses',
+      'Robust against small measurement noise within the ε margin',
+      'Mathematically elegant and memory efficient for moderate dataset sizes'
+    ],
+    idealFor: 'Continuous mechanical/hydraulic physics, smooth calibrations, and clean sensor traces.'
+  },
+  elastic_net: {
+    id: 'elastic_net',
+    name: 'ElasticNet Regularized Linear',
+    badge: 'L1 + L2 Regularized',
+    tagline: 'A transparent linear formula that balances correlated sensors and zeroes out useless channels.',
+    whatItIs: 'ElasticNet is a linear regression model equipped with two guards: L1 (Lasso) which automatically zeroes out irrelevant sensors, and L2 (Ridge) which gracefully shares weights across sensors that measure the same thing (collinearity). The result is a simple, explainable mathematical equation.',
+    howItWorks: [
+      'Fits a direct formula: Y = (w₁ · Sensor₁) + (w₂ · Sensor₂) + … + Bias.',
+      'Applies an L1 penalty to drive weights of noisy or uninformative sensors strictly to zero (automatic feature selection).',
+      'Applies an L2 penalty to keep weights stable and prevent any single collinear channel from exploding.'
+    ],
+    sensorExample: {
+      scenario: 'Verifying battery pack output voltage from individual cell modules and ambient conditions.',
+      inputs: 'Module Voltages 1–8, Battery Current, Cabin Temp, Battery Surface Temp.',
+      prediction: 'Total Pack Voltage (V)',
+      outcome: 'It easily discovers that Pack Voltage is essentially the sum of the module voltages, gives each module an equal weight of ~1.0, and sets the weight for irrelevant Cabin Temp to exactly 0.0.'
+    },
+    pros: [
+      'Completely transparent and explainable (direct formula coefficients)',
+      'Identifies and eliminates redundant, zero-impact sensor channels',
+      'Instantaneous training time (under 5 milliseconds)'
+    ],
+    idealFor: 'Physical linear benchmarks, sanity-checking sensor equations, and detecting collinearity.'
+  },
+  mlp: {
+    id: 'mlp',
+    name: 'Multi-Layer Perceptron (MLP Neural Net)',
+    badge: 'Deep Neural Network',
+    tagline: 'Multi-layered artificial neural network for discovering deep non-linear physical interactions.',
+    whatItIs: 'An artificial neural network modeled after biological brain pathways. Inputs pass through multiple layers of simulated neurons (64 neurons in Layer 1, 32 neurons in Layer 2). Each neuron combines its inputs, applies a non-linear activation (ReLU), and passes the signal onward to discover hidden physical interactions.',
+    howItWorks: [
+      'All inputs are standardized (mean=0, variance=1) for balanced gradient propagation.',
+      'Hidden Layer 1 (64 neurons) learns primitive sensor combinations (e.g. Pressure × Temp ratios).',
+      'Hidden Layer 2 (32 neurons) combines these sub-features to map high-level system states.',
+      'Uses backpropagation and early stopping to tune thousands of connection weights without memorizing noise.'
+    ],
+    sensorExample: {
+      scenario: 'Predicting combustion chamber emissions (NOx ppm) in a heavy-duty diesel generator.',
+      inputs: 'Manifold Pressure, Intake Air Temp, Fuel Injection Timing, Exhaust O2 (%), Engine Load.',
+      prediction: 'NOx Emission Concentration (ppm)',
+      outcome: 'The neural network discovers complex multi-way chemical interactions between high intake temperature and lean oxygen ratios that simple linear or shallow models miss.'
+    },
+    pros: [
+      'Can approximate virtually any smooth non-linear physical mapping',
+      'Captures cross-sensor interactions without needing manual feature engineering',
+      'Standardized architecture with early stopping to prevent overtraining'
+    ],
+    idealFor: 'Complex multi-sensor physics, high-dimensional telemetry, and non-linear system identification.'
+  }
+};
+
 interface MLTrainingResult {
   success: boolean;
   target_col: string;
@@ -788,9 +955,22 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
     'lightgbm'
   ]);
   const [splitRatio, setSplitRatio] = useState<number>(0.2); // 80% train / 20% test
+  const [highCorrThreshold, setHighCorrThreshold] = useState<number>(0.3);
+  const [activeModelDetail, setActiveModelDetail] = useState<MLModelDetail | null>(null);
   const [isTrainingML, setIsTrainingML] = useState(false);
   const [mlResult, setMlResult] = useState<MLTrainingResult | null>(null);
   const [mlError, setMlError] = useState<string | null>(null);
+
+  // Keyboard accessibility: dismiss active model detail dialog on Escape
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && activeModelDetail) {
+        setActiveModelDetail(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeModelDetail]);
 
   // Candidate features sorted by correlation ranking under the active algorithm
   const sortedCandidateFeatures = useMemo(() => {
@@ -807,6 +987,23 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
       return scoreB - scoreA;
     });
   }, [numericColumns, targetVariable, activeRankings, corrData]);
+
+  // Real-time count of features meeting the configured High Corr threshold
+  const qualifyingHighCorrCount = useMemo(() => {
+    return sortedCandidateFeatures.filter(c => {
+      const score = Math.abs(activeRankings[c]?.signed_score ?? activeRankings[c]?.score ?? 0);
+      return score >= highCorrThreshold;
+    }).length;
+  }, [sortedCandidateFeatures, activeRankings, highCorrThreshold]);
+
+  // Handler to filter features by High Corr threshold
+  const handleSelectHighCorrDrivers = (thresh: number = highCorrThreshold) => {
+    const high = sortedCandidateFeatures.filter(c => {
+      const score = Math.abs(activeRankings[c]?.signed_score ?? activeRankings[c]?.score ?? 0);
+      return score >= thresh;
+    });
+    setFeatureSensors(high.length > 0 ? high : sortedCandidateFeatures.slice(0, 5));
+  };
 
   // Initialize features when target, columns, or correlation algorithm rankings change
   useEffect(() => {
@@ -2252,38 +2449,101 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
               </div>
 
               {corrData && Object.keys(activeRankings).length > 0 ? (
-                <div className="ml-corr-quick-pills">
-                  <button
-                    type="button"
-                    onClick={() => setFeatureSensors(sortedCandidateFeatures.slice(0, 5))}
-                    className="ml-quick-driver-btn"
-                    title="Select top 5 drivers by correlation"
-                  >
-                    🎯 Top 5
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setFeatureSensors(sortedCandidateFeatures.slice(0, 10))}
-                    className="ml-quick-driver-btn"
-                    title="Select top 10 drivers by correlation"
-                  >
-                    ⚡ Top 10
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const high = sortedCandidateFeatures.filter(c => {
-                        const score = Math.abs(activeRankings[c]?.signed_score ?? activeRankings[c]?.score ?? 0);
-                        return score >= 0.3;
-                      });
-                      setFeatureSensors(high.length > 0 ? high : sortedCandidateFeatures.slice(0, 5));
-                    }}
-                    className="ml-quick-driver-btn"
-                    title="Select all features with absolute correlation >= 0.3"
-                  >
-                    ✨ High Corr (|r|≥0.3)
-                  </button>
-                </div>
+                <>
+                  <div className="ml-corr-quick-pills">
+                    <button
+                      type="button"
+                      onClick={() => setFeatureSensors(sortedCandidateFeatures.slice(0, 5))}
+                      className="ml-quick-driver-btn"
+                      title="Select top 5 drivers by correlation"
+                    >
+                      🎯 Top 5
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFeatureSensors(sortedCandidateFeatures.slice(0, 10))}
+                      className="ml-quick-driver-btn"
+                      title="Select top 10 drivers by correlation"
+                    >
+                      ⚡ Top 10
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectHighCorrDrivers(highCorrThreshold)}
+                      className="ml-quick-driver-btn high-corr-btn active"
+                      title={`Select features with correlation >= ${highCorrThreshold.toFixed(2)}`}
+                    >
+                      ✨ High Corr (≥{highCorrThreshold.toFixed(2)})
+                      <span className="ml-thresh-count-badge">{qualifyingHighCorrCount}</span>
+                    </button>
+                  </div>
+
+                  {/* Configurable High Correlation Threshold Stepper & Presets */}
+                  <div className="ml-threshold-row">
+                    <div className="ml-threshold-label-wrap">
+                      <span className="ml-threshold-label">Threshold |score| ≥</span>
+                      <span className="ml-threshold-badge">{highCorrThreshold.toFixed(2)}</span>
+                    </div>
+                    <div className="ml-threshold-stepper">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = Math.max(0.05, Math.round((highCorrThreshold - 0.05) * 100) / 100);
+                          setHighCorrThreshold(next);
+                          handleSelectHighCorrDrivers(next);
+                        }}
+                        className="ml-thresh-step-btn"
+                        title="Decrease threshold by 0.05"
+                      >
+                        −
+                      </button>
+                      <input
+                        type="number"
+                        min="0.05"
+                        max="0.95"
+                        step="0.05"
+                        value={highCorrThreshold}
+                        onChange={(e) => {
+                          const val = Math.min(0.95, Math.max(0.05, parseFloat(e.target.value) || 0.1));
+                          setHighCorrThreshold(val);
+                          handleSelectHighCorrDrivers(val);
+                        }}
+                        className="ml-thresh-input"
+                        title="Custom correlation threshold"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = Math.min(0.95, Math.round((highCorrThreshold + 0.05) * 100) / 100);
+                          setHighCorrThreshold(next);
+                          handleSelectHighCorrDrivers(next);
+                        }}
+                        className="ml-thresh-step-btn"
+                        title="Increase threshold by 0.05"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="ml-thresh-presets">
+                    <span className="ml-thresh-presets-label">Presets:</span>
+                    {[0.2, 0.3, 0.5, 0.7].map(thresh => (
+                      <button
+                        key={thresh}
+                        type="button"
+                        onClick={() => {
+                          setHighCorrThreshold(thresh);
+                          handleSelectHighCorrDrivers(thresh);
+                        }}
+                        className={`ml-thresh-chip ${highCorrThreshold === thresh ? 'active' : ''}`}
+                        title={`Filter features by |score| >= ${thresh.toFixed(2)}`}
+                      >
+                        ≥{thresh.toFixed(2)}
+                      </button>
+                    ))}
+                  </div>
+                </>
               ) : (
                 <div className="ml-no-corr-banner">
                   <Info size={12} className="text-accent-cyan" />
@@ -2301,7 +2561,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
             </div>
 
             {sortedCandidateFeatures.length > 0 && (
-              <div className="corr-channels-scroll" style={{ maxHeight: '220px' }}>
+              <div className="corr-channels-scroll ml-channels-scroll">
                 {sortedCandidateFeatures.map(colName => {
                   const isChecked = featureSensors.includes(colName);
                   const rankInfo = activeRankings[colName];
@@ -2429,7 +2689,21 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
                     <div className="ml-model-card-info">
                       <div className="ml-model-card-top">
                         <span className="ml-model-name-text">{model.name}</span>
-                        <span className="ml-model-badge-tag">{model.badge}</span>
+                        <div className="ml-model-tags-group">
+                          <span className="ml-model-badge-tag">{model.badge}</span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setActiveModelDetail(ML_MODEL_DETAILS[model.id] || null);
+                            }}
+                            className="ml-model-info-btn"
+                            title={`Learn what ${model.name} is and how it works with a simple example`}
+                            aria-label={`Learn about ${model.name}`}
+                          >
+                            <HelpCircle size={13} />
+                          </button>
+                        </div>
                       </div>
                       <span className="ml-model-desc-text">{model.desc}</span>
                     </div>
@@ -3331,7 +3605,122 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
                 Done
               </button>
             </div>
+          </div>
+        </div>
+      )}
 
+      {/* FLOATING WINDOW / MODAL: ML ARCHITECTURE EXPLANATION & EXAMPLES */}
+      {activeModelDetail && (
+        <div className="model-modal-overlay" onClick={() => setActiveModelDetail(null)}>
+          <div
+            className="model-modal-dialog glass-panel"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="model-modal-title"
+          >
+            <div className="model-modal-header">
+              <div className="model-modal-title-group">
+                <div className="model-modal-icon-badge">
+                  <Cpu size={20} className="text-accent-cyan" />
+                </div>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <h3 id="model-modal-title" className="model-modal-title">{activeModelDetail.name}</h3>
+                    <span className="ml-model-badge-tag">{activeModelDetail.badge}</span>
+                  </div>
+                  <span className="model-modal-tagline">{activeModelDetail.tagline}</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveModelDetail(null)}
+                className="model-modal-close-btn"
+                aria-label="Close dialog"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="model-modal-body">
+              {/* Section 1: What is it in simple words */}
+              <div className="model-modal-section">
+                <div className="model-section-title">
+                  <Sparkles size={14} className="text-accent-cyan" />
+                  <span>What It Is (In Simple Words)</span>
+                </div>
+                <p className="model-section-text">{activeModelDetail.whatItIs}</p>
+              </div>
+
+              {/* Section 2: How it works under the hood */}
+              <div className="model-modal-section">
+                <div className="model-section-title">
+                  <Activity size={14} className="text-accent-blue" />
+                  <span>How It Works Under The Hood</span>
+                </div>
+                <ul className="model-steps-list">
+                  {activeModelDetail.howItWorks.map((step, idx) => (
+                    <li key={idx} className="model-step-item">
+                      <span className="step-num">{idx + 1}</span>
+                      <span>{step}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {/* Section 3: Concrete Sensor Engineering Example */}
+              <div className="model-modal-section example-box">
+                <div className="model-section-title">
+                  <Gauge size={14} className="text-emerald-400" />
+                  <span>Real-World Sensor Example</span>
+                </div>
+                <div className="example-content">
+                  <div className="example-row">
+                    <span className="example-label">Scenario:</span>
+                    <span className="example-val">{activeModelDetail.sensorExample.scenario}</span>
+                  </div>
+                  <div className="example-row">
+                    <span className="example-label">Inputs (X):</span>
+                    <span className="example-val mono">{activeModelDetail.sensorExample.inputs}</span>
+                  </div>
+                  <div className="example-row">
+                    <span className="example-label">Predicted (Y):</span>
+                    <span className="example-val highlight">{activeModelDetail.sensorExample.prediction}</span>
+                  </div>
+                  <div className="example-row outcome">
+                    <span className="example-label">How Model Solves It:</span>
+                    <span className="example-val">{activeModelDetail.sensorExample.outcome}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Section 4: Key Advantages & Ideal Use Cases */}
+              <div className="model-modal-section">
+                <div className="model-section-title">
+                  <Target size={14} className="text-amber-400" />
+                  <span>When To Use This Model</span>
+                </div>
+                <p className="model-section-text highlight-ideal">{activeModelDetail.idealFor}</p>
+                <div className="model-pros-list">
+                  {activeModelDetail.pros.map((pro, idx) => (
+                    <div key={idx} className="model-pro-pill">
+                      <Check size={11} className="text-accent-cyan" />
+                      <span>{pro}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="model-modal-footer">
+              <button
+                type="button"
+                onClick={() => setActiveModelDetail(null)}
+                className="btn btn-primary btn-modal-done"
+              >
+                Got It
+              </button>
+            </div>
           </div>
         </div>
       )}
