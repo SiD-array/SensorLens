@@ -253,7 +253,7 @@ async def analyze_similarity(req: AnalyzeRequest):
                     model = genai.GenerativeModel('gemini-1.5-flash')
                     
                     prompt = (
-                        f"You are a BSH appliance engineering expert analyzing sensor test data. "
+                        f"You are an appliance engineering expert analyzing sensor test data. "
                         f"Please write a short, professional, plain-language engineering summary explaining "
                         f"why these two sensor signals match or differ based on these calculated metrics:\n"
                         f"- Reference Sensor: {ref_col}, Test Sensor: {test_col}\n"

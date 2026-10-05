@@ -39,7 +39,15 @@ Since it is domain-agnostic, the platform makes no assumptions about sensor name
 
 ## 🚀 Setup & Installation
 
-### 1. Backend Setup
+### ⚡ 1-Click Launch & Desktop Shortcut (Windows)
+To quickly launch both the FastAPI backend and React frontend and open the dashboard in your default browser:
+* **Double-click `create_desktop_shortcut.bat`**: Creates a **SensorLens** shortcut on your Windows Desktop with the custom icon.
+* **Double-click `start_sensorlens.bat`** (or the Desktop icon): Automatically spins up the backend and frontend servers and pops up `http://localhost:5173` in your browser.
+* **Double-click `stop_sensorlens.bat`**: Instantly stops both backend and frontend background services.
+
+---
+
+### 1. Manual Backend Setup
 1. Open your terminal and navigate to the `backend/` folder:
    ```bash
    cd backend

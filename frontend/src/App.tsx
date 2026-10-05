@@ -160,7 +160,7 @@ export default function App() {
     similarThreshold: 0.60,
     wPearson: 0.5,
     wDtw: 0.5,
-    oneDrivePath: 'C:\\Users\\sidb9\\OneDrive - BSH\\SensorLensReports',
+    oneDrivePath: 'C:\\Users\\Public\\SensorLensReports',
     apiKey: ''
   });
 
@@ -1367,7 +1367,7 @@ export default function App() {
                        <Lightbulb size={16} className="text-accent-cyan" />
                        <span className="roadmap-title">System Architecture: How the 4 Engines Connect</span>
                      </div>
-                     <span className="roadmap-badge">BSH Engineering Guide</span>
+                     <span className="roadmap-badge">Engineering Workflow Guide</span>
                    </div>
 
                    <div className="roadmap-steps-grid">
