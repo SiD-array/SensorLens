@@ -304,10 +304,11 @@
 
 .dashboard-layout {
   display: grid;
-  grid-template-columns: 320px 1fr;
-  gap: 20px;
-  padding: 20px;
+  grid-template-columns: clamp(340px, 22vw, 420px) minmax(0, 1fr);
+  gap: 16px;
+  padding: 16px 20px;
   height: 100%;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -377,17 +378,18 @@
 }
 
 .file-title {
-  font-size: 0.98rem;
+  font-size: 0.94rem;
   font-weight: 600;
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 190px;
+  flex: 1;
+  min-width: 0;
 }
 
 .file-meta {
-  font-size: 0.84rem;
+  font-size: 0.8rem;
   color: var(--text-secondary);
   margin-top: 2px;
 }
@@ -396,9 +398,11 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-top: 12px;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px solid rgba(255, 255, 255, 0.03);
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
 }
 
 .tag-select {
@@ -460,6 +464,8 @@
 .overview-selected-info {
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  max-width: 480px;
 }
 
 .overview-selected-info .label {
@@ -474,6 +480,9 @@
   font-size: 0.88rem;
   font-weight: 600;
   margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .card-grid {
@@ -1309,15 +1318,18 @@
 .library-toolbar {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
   margin-bottom: 8px;
 }
 
 .library-search-bar {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex: 1;
+  min-width: 0;
   height: 32px;
   padding: 0 10px;
   background: var(--surface-input);
@@ -1338,17 +1350,20 @@
 
 .library-search-input {
   flex: 1;
+  min-width: 0;
+  width: 100%;
   background: transparent !important;
   border: none !important;
   outline: none !important;
   color: var(--text-primary) !important;
-  font-size: 0.75rem !important;
+  font-size: 0.76rem !important;
   padding: 0 !important;
-  min-width: 0;
+  text-overflow: ellipsis;
 }
 
 .library-search-input::placeholder {
   color: var(--text-muted);
+  font-size: 0.75rem;
 }
 
 .library-search-clear {
@@ -1361,6 +1376,7 @@
   align-items: center;
   justify-content: center;
   transition: color var(--duration-fast);
+  flex-shrink: 0;
 }
 
 .library-search-clear:hover {
@@ -1379,6 +1395,8 @@
   color: var(--text-secondary);
   transition: border-color var(--duration-fast);
   position: relative;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .library-sort-picker:focus-within,
@@ -1411,12 +1429,15 @@
 .library-filter-segments {
   display: flex;
   align-items: center;
-  gap: 3px;
+  justify-content: space-between;
+  gap: 2px;
   padding: 3px;
   background: var(--surface-panel);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  overflow-x: auto;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .library-segment-btn {
@@ -1424,13 +1445,13 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  padding: 3px 6px;
+  gap: 3px;
+  padding: 4px 6px;
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
-  font-size: 0.68rem;
+  font-size: 0.69rem;
   font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
@@ -1451,8 +1472,8 @@
 }
 
 .library-segment-btn .segment-count {
-  font-size: 0.6rem;
-  opacity: 0.7;
+  font-size: 0.62rem;
+  opacity: 0.75;
 }
 
 /* Bulk Action Bar */
@@ -1601,4 +1622,45 @@
 
 [data-theme="light"] .gauge-bar-track {
   background: rgba(0, 0, 0, 0.08);
+}
+
+/* ========================================================================= */
+/* RESPONSIVE LAYOUT ADJUSTMENTS FOR DASHBOARD DISPLAY RESOLUTIONS           */
+/* (1920x1200, 1080p, High-DPI scaling, and Ultra-wide 2560x1600)            */
+/* ========================================================================= */
+@media (min-width: 2000px) {
+  .dashboard-layout {
+    grid-template-columns: 420px minmax(0, 1fr);
+    gap: 24px;
+    padding: 24px;
+  }
+}
+
+@media (max-width: 1600px) {
+  .dashboard-layout {
+    grid-template-columns: clamp(330px, 23vw, 370px) minmax(0, 1fr);
+    gap: 14px;
+    padding: 14px 16px;
+  }
+}
+
+@media (max-width: 1280px) {
+  .dashboard-layout {
+    grid-template-columns: clamp(310px, 26vw, 340px) minmax(0, 1fr);
+    gap: 12px;
+    padding: 12px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .dashboard-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+    gap: 12px;
+    padding: 12px;
+    overflow-y: auto;
+  }
+  .library-dropzone-container {
+    max-height: 440px;
+  }
 }

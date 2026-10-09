@@ -1122,7 +1122,8 @@ export default function App() {
                 <div className="library-filter-segments" role="radiogroup" aria-label="Filter runs by tag">
                   {(['all', 'reference', 'useful', 'reviewable', 'archive'] as const).map(tag => {
                     const count = tag === 'all' ? files.length : files.filter(f => f.tag === tag).length;
-                    const label = tag === 'all' ? 'All' : tag === 'reference' ? 'Ref' : tag.charAt(0).toUpperCase() + tag.slice(1);
+                    const label = tag === 'all' ? 'All' : tag === 'reference' ? 'Ref' : tag === 'reviewable' ? 'Review' : tag.charAt(0).toUpperCase() + tag.slice(1);
+                    const tooltip = tag === 'all' ? 'All Runs' : tag === 'reference' ? 'Reference Runs' : tag === 'reviewable' ? 'Needs Review' : `${tag.charAt(0).toUpperCase() + tag.slice(1)} Runs`;
                     return (
                       <button 
                         key={tag}
@@ -1131,6 +1132,7 @@ export default function App() {
                         className={`library-segment-btn ${libraryTagFilter === tag ? 'active' : ''}`}
                         role="radio"
                         aria-checked={libraryTagFilter === tag}
+                        title={tooltip}
                       >
                         <span>{label}</span>
                         <span className="segment-count">({count})</span>
