@@ -39,11 +39,14 @@ Since it is domain-agnostic, the platform makes no assumptions about sensor name
 
 ## 🚀 Setup & Installation
 
-### ⚡ 1-Click Launch & Desktop Shortcut (Windows)
-To quickly launch both the FastAPI backend and React frontend and open the dashboard in your default browser:
-* **Double-click `create_desktop_shortcut.bat`**: Creates a **SensorLens** shortcut on your Windows Desktop with the custom icon.
-* **Double-click `start_sensorlens.bat`** (or the Desktop icon): Automatically spins up the backend and frontend servers and pops up `http://localhost:5173` in your browser.
-* **Double-click `stop_sensorlens.bat`**: Instantly stops both backend and frontend background services.
+### ⚡ 1-Click Setup & Launch (Windows)
+When cloning or downloading the repository on a new machine:
+* **First-Time Setup**: Double-click **`setup_first_time.bat`**. This automatically creates the Python virtual environment, installs all Python packages (`requirements.txt`), installs all frontend Node.js packages (`npm install`), and places a **SensorLens** shortcut on your Desktop.
+* **Launch**: Double-click **`start_sensorlens.bat`** (or the Desktop shortcut). Both servers will start in the background and SensorLens will open automatically in your browser.
+* **Stop**: Double-click **`stop_sensorlens.bat`** to stop all background services.
+
+> [!IMPORTANT]
+> `requirements.txt` installs dependencies for the **Python backend only**. The **React frontend** uses Vite and Node.js; its dependencies (`node_modules`) are installed separately via `cd frontend && npm install`.
 
 ---
 

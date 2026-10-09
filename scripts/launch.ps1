@@ -25,6 +25,48 @@ $frontendStartedByUs = $false
 $backendProc = $null
 $frontendProc = $null
 
+# Environment Pre-Checks
+$hasNpm = [bool](Get-Command npm -ErrorAction SilentlyContinue)
+$hasNode = [bool](Get-Command node -ErrorAction SilentlyContinue)
+
+if (-not $hasNpm -or -not $hasNode) {
+    Write-Color "====================================================================" Red
+    Write-Color " [!] ERROR: Node.js / npm is not installed or not in PATH!" Red
+    Write-Color "====================================================================" Red
+    Write-Host ""
+    Write-Host " The SensorLens frontend requires Node.js (v18+ or v20+ LTS)." -ForegroundColor Yellow
+    Write-Host " Please download and install Node.js from: https://nodejs.org" -ForegroundColor White
+    Write-Host ""
+    Write-Host " After installing Node.js, restart this launcher." -ForegroundColor Gray
+    Write-Color "====================================================================" Red
+    Write-Host ""
+    Read-Host "Press Enter to exit"
+    exit 1
+}
+
+# Auto-install frontend dependencies if node_modules is missing (fresh GitHub clone)
+$frontendNodeModules = Join-Path $ProjectRoot "frontend\node_modules"
+if (-not (Test-Path $frontendNodeModules)) {
+    Write-Color "[*] First-time setup detected: 'frontend/node_modules' is missing." Yellow
+    Write-Color "[*] Automatically installing frontend packages (npm install)..." Cyan
+    Write-Host "    (This only happens once on a new system; please wait 1-2 minutes)" -ForegroundColor Gray
+    Write-Host ""
+
+    $frontendDir = Join-Path $ProjectRoot "frontend"
+    $installProc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c npm install" -WorkingDirectory $frontendDir -Wait -PassThru -NoNewWindow
+    if ($installProc.ExitCode -ne 0) {
+        Write-Host ""
+        Write-Color "[!] ERROR: 'npm install' failed with exit code $($installProc.ExitCode)." Red
+        Write-Host "    Try opening a terminal, navigate to the frontend folder, and run 'npm install' manually." -ForegroundColor Yellow
+        Write-Host ""
+        Read-Host "Press Enter to exit"
+        exit 1
+    }
+    Write-Host ""
+    Write-Color "[OK] Frontend dependencies installed successfully!" Green
+    Write-Host ""
+}
+
 # 1. Check or Start Backend (Port 8000)
 if (Test-PortListening 8000) {
     Write-Color "[OK] Backend is already active on http://localhost:8000" Green
