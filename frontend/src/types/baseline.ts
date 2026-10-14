@@ -8,6 +8,7 @@ export interface SensorColumn {
   mean: number;
   std: number;
   sparkline: number[];
+  data?: number[];
 }
 
 export interface TestFile {

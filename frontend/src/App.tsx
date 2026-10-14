@@ -52,6 +52,7 @@ interface SensorColumn {
   mean: number;
   std: number;
   sparkline: number[];
+  data?: number[];
 }
 
 interface TestFile {
@@ -87,13 +88,23 @@ export default function App() {
 
   // App States
   const [files, setFiles] = useState<TestFile[]>([]);
-  const [activeTestId, setActiveTestId] = useState<string>(() => {
+  const [activeTestIds, setActiveTestIds] = useState<string[]>(() => {
     try {
-      return localStorage.getItem('sensorlens_active_test_id') || '';
+      const saved = localStorage.getItem('sensorlens_active_test_ids');
+      if (saved) return JSON.parse(saved);
+      const legacy = localStorage.getItem('sensorlens_active_test_id');
+      return legacy ? [legacy] : [];
     } catch {
-      return '';
+      return [];
     }
   });
+  const activeTestId = activeTestIds[0] || '';
+  const setActiveTestId = (id: string) => {
+    setActiveTestIds(id ? [id] : []);
+  };
+  const toggleTestId = (id: string) => {
+    setActiveTestIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
   const [activeRefId, setActiveRefId] = useState<string>(() => {
     try {
       return localStorage.getItem('sensorlens_active_ref_id') || '';
@@ -184,10 +195,11 @@ export default function App() {
 
   useEffect(() => {
     try {
-      if (activeTestId) localStorage.setItem('sensorlens_active_test_id', activeTestId);
+      localStorage.setItem('sensorlens_active_test_ids', JSON.stringify(activeTestIds));
+      if (activeTestIds[0]) localStorage.setItem('sensorlens_active_test_id', activeTestIds[0]);
       else localStorage.removeItem('sensorlens_active_test_id');
     } catch {}
-  }, [activeTestId]);
+  }, [activeTestIds]);
 
   useEffect(() => {
     try {
@@ -422,11 +434,11 @@ export default function App() {
     if (!deletedFile) return;
 
     const wasRef = activeRefId === id;
-    const wasTest = activeTestId === id;
+    const wasTest = activeTestIds.includes(id);
 
     setFiles(prev => prev.filter(f => f.id !== id));
     if (wasRef) setActiveRefId('');
-    if (wasTest) setActiveTestId('');
+    if (wasTest) setActiveTestIds(prev => prev.filter(x => x !== id));
     setBulkSelectedIds(prev => prev.filter(item => item !== id));
 
     toast.info(`Deleted "${deletedFile.name}"`, 'Run Removed', {
@@ -434,7 +446,7 @@ export default function App() {
       onClick: () => {
         setFiles(prev => [...prev, deletedFile]);
         if (wasRef) setActiveRefId(deletedFile.id);
-        if (wasTest) setActiveTestId(deletedFile.id);
+        if (wasTest) setActiveTestIds(prev => [...prev, deletedFile.id]);
         toast.success(`Restored "${deletedFile.name}"`, 'Run Restored');
       }
     });
@@ -448,7 +460,7 @@ export default function App() {
 
     setFiles(prev => prev.filter(f => !bulkSelectedIds.includes(f.id)));
     if (bulkSelectedIds.includes(activeRefId)) setActiveRefId('');
-    if (bulkSelectedIds.includes(activeTestId)) setActiveTestId('');
+    setActiveTestIds(prev => prev.filter(x => !bulkSelectedIds.includes(x)));
     setBulkSelectedIds([]);
 
     toast.info(`Deleted ${count} run${count > 1 ? 's' : ''}`, 'Bulk Action', {
@@ -683,6 +695,7 @@ export default function App() {
         tags: files.reduce((acc, f) => ({ ...acc, [f.id]: f.tag }), {}),
         activeRefId,
         activeTestId,
+        activeTestIds,
         mappings,
         selectedPlotCols,
         saved_reports: [
@@ -750,6 +763,7 @@ export default function App() {
         tags: files.reduce((acc, f) => ({ ...acc, [f.id]: f.tag }), {}),
         activeRefId,
         activeTestId,
+        activeTestIds,
         mappings,
         selectedPlotCols,
         saved_reports: [
@@ -822,14 +836,18 @@ export default function App() {
             setActiveRefId(importedFiles[0].id);
           }
           
-          let foundTest = importedFiles.find((f: any) => f.id !== foundRef?.id && (f.tag === 'useful' || f.tag !== 'reference'));
-          if (!foundTest && state.activeTestId) {
-            foundTest = importedFiles.find((f: any) => f.id === state.activeTestId);
-          }
-          if (foundTest) {
-            setActiveTestId(foundTest.id);
-          } else if (importedFiles.length > 1) {
-            setActiveTestId(importedFiles[1].id);
+          if (state.activeTestIds && Array.isArray(state.activeTestIds) && state.activeTestIds.length > 0) {
+            setActiveTestIds(state.activeTestIds);
+          } else {
+            let foundTest = importedFiles.find((f: any) => f.id !== foundRef?.id && (f.tag === 'useful' || f.tag !== 'reference'));
+            if (!foundTest && state.activeTestId) {
+              foundTest = importedFiles.find((f: any) => f.id === state.activeTestId);
+            }
+            if (foundTest) {
+              setActiveTestIds([foundTest.id]);
+            } else if (importedFiles.length > 1) {
+              setActiveTestIds([importedFiles[1].id]);
+            }
           }
 
           if (state.mappings) {
@@ -943,14 +961,73 @@ export default function App() {
     toast.success(`Exported CSV for ${selectedResultCol}`, 'CSV Exported');
   };
 
-  const togglePlotColumn = (fileId: string, colName: string) => {
-    const exists = selectedPlotCols.find(p => p.fileId === fileId && p.colName === colName);
-    if (exists) {
-      setSelectedPlotCols(selectedPlotCols.filter(p => !(p.fileId === fileId && p.colName === colName)));
+  // Toggle plotting a sensor across all uploaded files that contain it
+  const togglePlotSensorAcrossAllFiles = (sensorName: string) => {
+    const matchingFiles = files.filter(f => f.columns.some(c => c.name === sensorName));
+    if (matchingFiles.length === 0) return;
+
+    const allAlreadyPlotted = matchingFiles.every(f => 
+      selectedPlotCols.some(p => p.fileId === f.id && p.colName === sensorName)
+    );
+
+    if (allAlreadyPlotted) {
+      setSelectedPlotCols(prev => 
+        prev.filter(p => p.colName !== sensorName || !matchingFiles.some(mf => mf.id === p.fileId))
+      );
+      toast.info(`Removed "${sensorName}" across all runs from Visual Report`, 'Channel Untoggled');
     } else {
-      setSelectedPlotCols([...selectedPlotCols, { fileId, colName }]);
+      setSelectedPlotCols(prev => {
+        const next = [...prev];
+        matchingFiles.forEach(f => {
+          if (!next.some(p => p.fileId === f.id && p.colName === sensorName)) {
+            next.push({
+              fileId: f.id,
+              colName: sensorName,
+              fileName: f.name
+            });
+          }
+        });
+        return next;
+      });
+      toast.success(`Plotted "${sensorName}" across ${matchingFiles.length} runs in Visual Report`, 'Channels Added');
     }
   };
+
+  // Unique sensor channels across selected Test runs (or all uploaded runs)
+  const availableSensorsForOverview = useMemo(() => {
+    const channelMap = new Map<string, {
+      name: string;
+      type: string;
+      min: number;
+      max: number;
+      mean: number;
+      sparkline: number[];
+      filesCount: number;
+    }>();
+
+    const sourceFiles = activeTestIds.length > 0 
+      ? files.filter(f => activeTestIds.includes(f.id))
+      : files;
+
+    sourceFiles.forEach(f => {
+      f.columns.forEach(col => {
+        if (!channelMap.has(col.name)) {
+          const filesWithCol = files.filter(file => file.columns.some(c => c.name === col.name));
+          channelMap.set(col.name, {
+            name: col.name,
+            type: col.type,
+            min: col.min,
+            max: col.max,
+            mean: col.mean,
+            sparkline: col.sparkline,
+            filesCount: filesWithCol.length
+          });
+        }
+      });
+    });
+
+    return Array.from(channelMap.values());
+  }, [files, activeTestIds]);
 
   return (
     <div className="app-shell">
@@ -981,7 +1058,13 @@ export default function App() {
           onOpenMobileDrawer={() => setIsDrawerOpen(true)}
           onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
           activeRefName={files.find(f => f.id === activeRefId)?.name}
-          activeTestName={files.find(f => f.id === activeTestId)?.name}
+          activeTestName={
+            activeTestIds.length === 0
+              ? undefined
+              : activeTestIds.length === 1
+                ? files.find(f => f.id === activeTestIds[0])?.name
+                : `${activeTestIds.length} Test Runs`
+          }
           fileCount={files.length}
           hasAlignment={Object.keys(mappings).length > 0}
           hasBaseline={!!activeRefId}
@@ -1281,7 +1364,7 @@ export default function App() {
                         <div 
                           key={f.id} 
                           className={`file-card ${
-                            activeTestId === f.id ? 'active-test' : activeRefId === f.id ? 'active-ref' : ''
+                            activeTestIds.includes(f.id) ? 'active-test' : activeRefId === f.id ? 'active-ref' : ''
                           }`}
                         >
                           <div className="file-card-header">
@@ -1326,15 +1409,16 @@ export default function App() {
 
                             <div className="selection-toggle-group">
                               <button 
-                                onClick={() => setActiveTestId(f.id)}
-                                className={`selection-btn ${activeTestId === f.id ? 'active-test-btn' : ''}`}
-                                title="Set as Test comparison run"
+                                onClick={() => toggleTestId(f.id)}
+                                className={`selection-btn ${activeTestIds.includes(f.id) ? 'active-test-btn' : ''}`}
+                                title={activeTestIds.includes(f.id) ? "Remove from Test comparison runs" : "Add to Test comparison runs"}
                               >
-                                Test
+                                Test {activeTestIds.includes(f.id) ? '✓' : ''}
                               </button>
                               <button 
                                 onClick={() => {
                                   setActiveRefId(f.id);
+                                  setActiveTestIds(prev => prev.filter(x => x !== f.id));
                                   updateTag(f.id, 'reference');
                                 }}
                                 className={`selection-btn ${activeRefId === f.id ? 'active-ref-btn' : ''}`}
@@ -1357,7 +1441,7 @@ export default function App() {
               <div className="panel-header" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '4px' }}>
                 <h2 style={{ fontSize: '1rem', color: 'var(--text-primary)' }}>Live Channel Overview</h2>
                 <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                  Inspect sensor profiles below. Click a card to toggle its presence in the Visual Report graph.
+                  Inspect sensor profiles below. Click any card to toggle plotting that sensor across all uploaded files in the Visual Report graph.
                 </p>
               </div>
 
@@ -1410,9 +1494,16 @@ export default function App() {
                 {/* Active Selection Info */}
                 <div className="overview-top-bar">
                   <div className="overview-selected-info">
-                    <span className="label">Active Test Run</span>
+                    <span className="label">
+                      Active Test Runs {activeTestIds.length > 1 ? `(${activeTestIds.length} Selected)` : ''}
+                    </span>
                     <span className="value" style={{ color: 'var(--accent-cyan)' }}>
-                      {files.find(f => f.id === activeTestId)?.name || 'None selected'}
+                      {activeTestIds.length === 0
+                        ? 'None selected (showing all uploaded runs)'
+                        : activeTestIds.length === 1
+                          ? files.find(f => f.id === activeTestIds[0])?.name
+                          : files.filter(f => activeTestIds.includes(f.id)).map(f => f.name.replace(/\.[^/.]+$/, '')).join(', ')
+                      }
                     </span>
                   </div>
                   <div style={{ width: '1px', height: '24px', background: 'rgba(255, 255, 255, 0.1)' }} />
@@ -1425,21 +1516,56 @@ export default function App() {
                 </div>
 
                 {/* Sensor Cards Grid */}
-                {activeTestId ? (
+                {availableSensorsForOverview.length > 0 ? (
                   <div className="card-grid">
-                    {files.find(f => f.id === activeTestId)?.columns.map(col => {
-                      const isSelected = selectedPlotCols.some(p => p.fileId === activeTestId && p.colName === col.name);
+                    {availableSensorsForOverview.map(col => {
+                      const filesWithCol = files.filter(f => f.columns.some(c => c.name === col.name));
+                      const plottedCount = filesWithCol.filter(f => 
+                        selectedPlotCols.some(p => p.fileId === f.id && p.colName === col.name)
+                      ).length;
+                      const isAllPlotted = filesWithCol.length > 0 && plottedCount === filesWithCol.length;
+                      const isPartiallyPlotted = plottedCount > 0 && !isAllPlotted;
+
                       return (
                         <div 
                           key={col.name}
-                          onClick={() => togglePlotColumn(activeTestId, col.name)}
-                          className={`sensor-card ${isSelected ? 'selected' : ''}`}
+                          onClick={() => togglePlotSensorAcrossAllFiles(col.name)}
+                          className={`sensor-card ${isAllPlotted ? 'selected' : isPartiallyPlotted ? 'partially-selected' : ''}`}
+                          title={`Click to plot "${col.name}" across all ${filesWithCol.length} uploaded files in Visual Report`}
+                          style={{ cursor: 'pointer' }}
                         >
                           <div className="sensor-card-header">
                             <span className="sensor-title" title={col.name}>{col.name}</span>
-                            <span className={`sensor-type-badge ${col.type === 'numeric' ? 'numeric' : 'categorical'}`}>
-                              {col.type}
-                            </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <span className={`sensor-type-badge ${col.type === 'numeric' ? 'numeric' : 'categorical'}`}>
+                                {col.type}
+                              </span>
+                              <span 
+                                className="run-count-badge"
+                                style={{
+                                  fontSize: '0.65rem',
+                                  padding: '2px 6px',
+                                  borderRadius: '4px',
+                                  fontWeight: 600,
+                                  background: isAllPlotted 
+                                    ? 'rgba(0, 242, 254, 0.2)' 
+                                    : isPartiallyPlotted 
+                                      ? 'rgba(245, 158, 11, 0.2)' 
+                                      : 'rgba(255, 255, 255, 0.08)',
+                                  color: isAllPlotted 
+                                    ? '#00f2fe' 
+                                    : isPartiallyPlotted 
+                                      ? '#fbbf24' 
+                                      : 'var(--text-muted)'
+                                }}
+                              >
+                                {isAllPlotted 
+                                  ? `✓ Plotted (${filesWithCol.length} runs)` 
+                                  : isPartiallyPlotted 
+                                    ? `${plottedCount}/${filesWithCol.length} runs` 
+                                    : `${filesWithCol.length} run${filesWithCol.length > 1 ? 's' : ''}`}
+                              </span>
+                            </div>
                           </div>
 
                           {/* Sparkline & Values */}
@@ -1455,7 +1581,7 @@ export default function App() {
                               <svg className="sparkline-svg">
                                 <polyline
                                   fill="none"
-                                  stroke={isSelected ? '#00f2fe' : '#64748b'}
+                                  stroke={isAllPlotted ? '#00f2fe' : isPartiallyPlotted ? '#fbbf24' : '#64748b'}
                                   strokeWidth="1.5"
                                   points={col.sparkline.map((val, idx) => {
                                     const x = (idx / (col.sparkline.length - 1)) * 80;
@@ -1481,7 +1607,11 @@ export default function App() {
                 ) : (
                   <div style={{ height: '70%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', gap: '8px' }}>
                     <Info size={28} />
-                    <span style={{ fontSize: '0.8rem' }}>Please select or upload a Test Run to view sensor channels.</span>
+                    <span style={{ fontSize: '0.8rem' }}>
+                      {files.length === 0 
+                        ? 'Upload Excel run files on the left to inspect sensor channels.' 
+                        : 'No sensor channels found in the selected runs.'}
+                    </span>
                   </div>
                 )}
               </div>

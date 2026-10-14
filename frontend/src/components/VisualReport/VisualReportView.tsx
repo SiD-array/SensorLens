@@ -52,7 +52,8 @@ export const VisualReportView: React.FC<VisualReportViewProps> = ({
         }
         if (col.min < globalMin) globalMin = col.min;
         if (col.max > globalMax) globalMax = col.max;
-        totalPoints = Math.max(totalPoints, col.sparkline.length);
+        const ptCount = (col.data && col.data.length > 0) ? col.data.length : col.sparkline.length;
+        totalPoints = Math.max(totalPoints, ptCount);
       }
     });
 
@@ -72,28 +73,30 @@ export const VisualReportView: React.FC<VisualReportViewProps> = ({
       ...selectedPlotCols.map(sel => {
         const file = files.find(f => f.id === sel.fileId);
         const col = file?.columns.find(c => c.name === sel.colName);
-        return col?.sparkline.length || 0;
+        return (col?.data && col.data.length > 0) ? col.data.length : (col?.sparkline.length || 0);
       })
     );
 
-    const xHeader = xAxisSensor === '__time__' ? 'Time_Step' : `X_${xAxisSensor}`;
+    const xHeader = xAxisSensor === '__time__' ? 'Time_Seconds' : `X_${xAxisSensor}`;
     const headers = [xHeader, ...selectedPlotCols.map(s => `${s.fileName || s.fileId}_${s.colName}`)];
     const rows: (string | number)[][] = [];
 
     // Fallback file for X sensor if needed
     const fallbackXFile = xAxisSensor !== '__time__' ? files.find(f => f.columns.some(c => c.name === xAxisSensor)) : null;
     const fallbackXCol = fallbackXFile?.columns.find(c => c.name === xAxisSensor);
+    const fallbackXData = (fallbackXCol?.data && fallbackXCol.data.length > 0) ? fallbackXCol.data : (fallbackXCol?.sparkline || []);
 
     for (let i = 0; i < maxPts; i++) {
       let xVal: number | string = i;
       if (xAxisSensor !== '__time__') {
-        xVal = fallbackXCol?.sparkline[i] !== undefined ? fallbackXCol.sparkline[i] : i;
+        xVal = fallbackXData[i] !== undefined ? fallbackXData[i] : i;
       }
       const row: (string | number)[] = [xVal];
       selectedPlotCols.forEach(sel => {
         const file = files.find(f => f.id === sel.fileId);
         const col = file?.columns.find(c => c.name === sel.colName);
-        row.push(col?.sparkline[i] !== undefined ? col.sparkline[i] : '');
+        const colData = (col?.data && col.data.length > 0) ? col.data : (col?.sparkline || []);
+        row.push(colData[i] !== undefined ? colData[i] : '');
       });
       rows.push(row);
     }
@@ -161,14 +164,17 @@ export const VisualReportView: React.FC<VisualReportViewProps> = ({
 
       const color = getChannelColor(idx);
       
-      // Resolve X values: Time index (default) or sensor values from the file
+      const rawValues = (col.data && col.data.length > 0) ? col.data : col.sparkline;
+
+      // Resolve X values: Time in seconds (row/data points) or sensor values from the file
       let dataPoints: [number, number][];
       if (xAxisSensor === '__time__') {
-        dataPoints = col.sparkline.map((val, ptIdx) => [ptIdx, val]);
+        dataPoints = rawValues.map((val, ptIdx) => [ptIdx, val]);
       } else {
         const fileXCol = file.columns.find(c => c.name === xAxisSensor) || globalXCol;
-        dataPoints = col.sparkline.map((val, ptIdx) => {
-          const xVal = fileXCol?.sparkline[ptIdx] !== undefined ? fileXCol.sparkline[ptIdx] : ptIdx;
+        const xValues = (fileXCol?.data && fileXCol.data.length > 0) ? fileXCol.data : (fileXCol?.sparkline || []);
+        dataPoints = rawValues.map((val, ptIdx) => {
+          const xVal = xValues[ptIdx] !== undefined ? xValues[ptIdx] : ptIdx;
           return [xVal, val];
         });
       }
@@ -177,11 +183,11 @@ export const VisualReportView: React.FC<VisualReportViewProps> = ({
         name: seriesName,
         type: chartType,
         data: dataPoints,
-        smooth: chartType === 'line',
-        symbolSize: chartType === 'scatter' ? 5 : 0,
-        showSymbol: chartType === 'scatter',
+        smooth: false, // Maintain authentic sensor precision without bezier smoothing distortion
+        symbolSize: chartType === 'scatter' ? 5 : (dataPoints.length > 400 ? 0 : 2),
+        showSymbol: chartType === 'scatter' || dataPoints.length <= 60,
         lineStyle: {
-          width: 2.5,
+          width: 2.2,
           color: color
         },
         itemStyle: {
@@ -189,14 +195,14 @@ export const VisualReportView: React.FC<VisualReportViewProps> = ({
         },
         emphasis: {
           focus: 'series',
-          lineStyle: { width: 4 }
+          lineStyle: { width: 3.5 }
         }
       });
     });
 
     const isTimeX = xAxisSensor === '__time__';
     const xAxisTitle = isTimeX 
-      ? 'Time [Sample Index]' 
+      ? 'Time (Seconds) [Row / Data Points]' 
       : `${xAxisSensor} [Sensor Reading]`;
 
     return {
@@ -205,7 +211,29 @@ export const VisualReportView: React.FC<VisualReportViewProps> = ({
         ...SENSORLENS_CHART_THEME.tooltip,
         trigger: isTimeX ? 'axis' : 'item',
         axisPointer: { type: 'cross', lineStyle: { color: '#00f2fe', type: 'dashed' } },
-        formatter: isTimeX ? undefined : (params: any) => {
+        formatter: isTimeX ? (params: any) => {
+          if (!params) return '';
+          const items = Array.isArray(params) ? params : [params];
+          if (items.length === 0) return '';
+          const firstVal = items[0].value;
+          const timeSec = Array.isArray(firstVal) ? firstVal[0] : (items[0].dataIndex ?? 0);
+          let html = `<div style="font-size:12px;padding:4px 6px;line-height:1.5;min-width:160px">
+            <div style="font-weight:600;color:#00f2fe;margin-bottom:4px;border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:3px">
+              ⏱️ Time: ${timeSec}s <span style="font-size:11px;color:#94a3b8">(Row ${timeSec + 1})</span>
+            </div>`;
+          items.forEach((item: any) => {
+            const val = Array.isArray(item.value) ? item.value[1] : item.value;
+            html += `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:2px">
+              <span style="display:flex;align-items:center;gap:6px">
+                <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${item.color}"></span>
+                <span style="color:#cbd5e1;font-size:11px">${item.seriesName}</span>
+              </span>
+              <b style="color:var(--text-primary, #fff);font-family:JetBrains Mono, monospace">${typeof val === 'number' ? val.toFixed(3) : val}</b>
+            </div>`;
+          });
+          html += `</div>`;
+          return html;
+        } : (params: any) => {
           const valX = Array.isArray(params.value) ? params.value[0] : params.value;
           const valY = Array.isArray(params.value) ? params.value[1] : '';
           return `<div style="font-size:12px;padding:3px 6px;line-height:1.5">
@@ -332,9 +360,9 @@ export const VisualReportView: React.FC<VisualReportViewProps> = ({
                 value={xAxisSensor}
                 onChange={(e) => setXAxisSensor(e.target.value)}
                 className="x-axis-select"
-                title="Select horizontal X-axis: Time or any sensor from uploaded runs"
+                title="Select horizontal X-axis: Time in seconds or any sensor from uploaded runs"
               >
-                <option value="__time__">⏱️ Time [Sample Index] (Default)</option>
+                <option value="__time__">⏱️ Time in Seconds [Data Points / Rows] (Default)</option>
                 {availableSensors.map(sensor => (
                   <option key={sensor} value={sensor}>📈 {sensor}</option>
                 ))}
@@ -343,10 +371,10 @@ export const VisualReportView: React.FC<VisualReportViewProps> = ({
                 <button
                   onClick={() => setXAxisSensor('__time__')}
                   className="x-axis-reset-btn"
-                  title="Reset horizontal axis to Time (Sample Index)"
+                  title="Reset horizontal axis to Time in Seconds"
                 >
                   <RotateCcw size={12} />
-                  <span>Time</span>
+                  <span>Time (s)</span>
                 </button>
               )}
             </div>

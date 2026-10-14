@@ -118,14 +118,19 @@ async def upload_file(file: UploadFile = File(...)):
                     
                     # Generate 30 downsampled points for the sparkline preview
                     sparkline_pts = similarity.interpolate_series(clean_series.values, 30).tolist()
+                    # Full accurate raw series matching sheet rows without any loss of data
+                    interpolated_full = numeric_series.interpolate(method='linear').bfill().ffill()
+                    raw_data = [round(float(v), 6) if pd.notna(v) else 0.0 for v in interpolated_full.values]
                 else:
                     c_min, c_max, c_mean, c_std = 0.0, 0.0, 0.0, 0.0
                     col_type = "empty_numeric"
                     sparkline_pts = []
+                    raw_data = []
             else:
                 c_min, c_max, c_mean, c_std = 0.0, 0.0, 0.0, 0.0
                 col_type = "categorical"
                 sparkline_pts = []
+                raw_data = []
                 
             columns_metadata.append({
                 "name": col,
@@ -136,7 +141,8 @@ async def upload_file(file: UploadFile = File(...)):
                 "max": c_max,
                 "mean": c_mean,
                 "std": c_std,
-                "sparkline": sparkline_pts
+                "sparkline": sparkline_pts,
+                "data": raw_data
             })
             
         # Store in-memory
@@ -480,10 +486,13 @@ async def import_workspace_session(state: dict):
                     c_mean = float(clean_series.mean())
                     c_std = float(clean_series.std()) if len(clean_series) > 1 else 0.0
                     sparkline_pts = similarity.interpolate_series(clean_series.values, 30).tolist()
+                    interpolated_full = num_series.interpolate(method='linear').bfill().ffill()
+                    raw_data = [round(float(v), 6) if pd.notna(v) else 0.0 for v in interpolated_full.values]
                 else:
                     col_type = "categorical"
                     c_min, c_max, c_mean, c_std = 0.0, 0.0, 0.0, 0.0
                     sparkline_pts = []
+                    raw_data = []
                 columns.append({
                     "name": str(col),
                     "type": col_type,
@@ -493,7 +502,8 @@ async def import_workspace_session(state: dict):
                     "max": c_max,
                     "mean": c_mean,
                     "std": c_std,
-                    "sparkline": sparkline_pts
+                    "sparkline": sparkline_pts,
+                    "data": raw_data
                 })
                 
         uploaded_files_cache[file_id] = {
