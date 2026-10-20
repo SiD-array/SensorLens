@@ -15,6 +15,7 @@ import {
 } from '../VisualReport/bucketUtils';
 
 import type { SensorBucket, SensorBucketMap } from '../VisualReport/bucketUtils';
+import { API_BASE_URL } from '../../config/api';
 
 interface ColumnAlignmentViewProps {
   files: TestFile[];
@@ -135,7 +136,7 @@ export const ColumnAlignmentView: React.FC<ColumnAlignmentViewProps> = ({
       const refCols = refFile.columns.map(c => c.name);
       const testCols = testFile.columns.map(c => c.name);
 
-      const res = await fetch('http://localhost:8000/api/alignment/lexical-match', {
+      const res = await fetch(`${API_BASE_URL}/api/alignment/lexical-match`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -184,7 +185,7 @@ export const ColumnAlignmentView: React.FC<ColumnAlignmentViewProps> = ({
     if (!refCol || !testCol || !activeRefId || !activeTestId) return;
 
     try {
-      const res = await fetch('http://localhost:8000/api/alignment/pair-score', {
+      const res = await fetch(`${API_BASE_URL}/api/alignment/pair-score`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

@@ -10,6 +10,7 @@ import type {
 } from '../../types/baseline';
 import { Button, KpiCard, HelpPopover } from '../ui';
 import { exportToCsv, SENSORLENS_CHART_THEME } from '../../utils/chartTheme';
+import { API_BASE_URL } from '../../config/api';
 
 interface BaselineEngineViewProps {
   files: TestFile[];
@@ -298,12 +299,12 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
         formData.append('direction', direction);
         formData.append('threshold_pct', '2.0');
 
-        res = await fetch('http://localhost:8000/api/baseline/build', {
+        res = await fetch(`${API_BASE_URL}/api/baseline/build`, {
           method: 'POST',
           body: formData
         });
       } else {
-        res = await fetch('http://localhost:8000/api/baseline/build-from-workspace', {
+        res = await fetch(`${API_BASE_URL}/api/baseline/build-from-workspace`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -375,7 +376,7 @@ export const BaselineEngineView: React.FC<BaselineEngineViewProps> = ({ files, m
         formData.append('mappings_json', JSON.stringify(mappings));
       }
 
-      const res = await fetch('http://localhost:8000/api/baseline/evaluate', {
+      const res = await fetch(`${API_BASE_URL}/api/baseline/evaluate`, {
         method: 'POST',
         body: formData
       });

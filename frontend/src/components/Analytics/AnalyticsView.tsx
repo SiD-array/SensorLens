@@ -10,6 +10,7 @@ import {
   EyeOff, Search, RotateCcw, CheckCircle2, Eye, Info
 } from 'lucide-react';
 import type { TestFile } from '../../types/baseline';
+import { API_BASE_URL } from '../../config/api';
 
 interface AnalyticsViewProps {
   files: TestFile[];
@@ -566,7 +567,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
     }
 
     try {
-      const res = await fetch('http://localhost:8000/api/analytics/construct-feature', {
+      const res = await fetch(`${API_BASE_URL}/api/analytics/construct-feature`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -642,7 +643,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
     setRulError(null);
 
     try {
-      const res = await fetch('http://localhost:8000/api/analytics/rul-prognosis', {
+      const res = await fetch(`${API_BASE_URL}/api/analytics/rul-prognosis`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -750,7 +751,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
     setCompositeSuccessMsg(null);
 
     try {
-      const res = await fetch('http://localhost:8000/api/analytics/composite-sensor', {
+      const res = await fetch(`${API_BASE_URL}/api/analytics/composite-sensor`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -865,7 +866,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
         formData.append('target_col', effectiveTarget.trim());
       }
 
-      const res = await fetch('http://localhost:8000/api/analytics/correlations', {
+      const res = await fetch(`${API_BASE_URL}/api/analytics/correlations`, {
         method: 'POST',
         body: formData
       });
@@ -908,7 +909,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
 
     setIsLoadingPair(true);
     try {
-      const res = await fetch('http://localhost:8000/api/analytics/diagnose-pair', {
+      const res = await fetch(`${API_BASE_URL}/api/analytics/diagnose-pair`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1038,7 +1039,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({ files, activeFileI
       formData.append('test_size', splitRatio.toString());
       formData.append('selected_models_json', JSON.stringify(selectedModels));
 
-      const res = await fetch('http://localhost:8000/api/analytics/ml-train', {
+      const res = await fetch(`${API_BASE_URL}/api/analytics/ml-train`, {
         method: 'POST',
         body: formData
       });

@@ -12,6 +12,7 @@ import { Button, Modal, Skeleton, KpiCard, HelpPopover } from './components/ui';
 import { AppSidebar, AppHeader, CommandPalette } from './components/shell';
 import type { ViewType } from './components/shell';
 import { exportToCsv, SENSORLENS_CHART_THEME } from './utils/chartTheme';
+import { API_BASE_URL } from './config/api';
 
 // Code-split sub-views to clear bundle warnings and optimize runtime footprint
 const VisualReportView = React.lazy(() => import('./components/VisualReport/VisualReportView').then(m => ({ default: m.VisualReportView })));
@@ -260,7 +261,7 @@ export default function App() {
     if (!refFile || !testFile) return;
 
     try {
-      const response = await fetch('http://localhost:8000/api/suggest-mapping', {
+      const response = await fetch(`${API_BASE_URL}/api/suggest-mapping`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -313,7 +314,7 @@ export default function App() {
           [uploadId]: { ...prev[uploadId], progress: 60, status: 'parsing' }
         }));
 
-        const response = await fetch('http://localhost:8000/api/upload', {
+        const response = await fetch(`${API_BASE_URL}/api/upload`, {
           method: 'POST',
           body: formData,
         });
@@ -379,7 +380,7 @@ export default function App() {
             progress: 100,
             status: 'error',
             errorMsg: 'Network or backend connection error',
-            suggestion: 'Make sure the backend API server is running on port 8000.'
+            suggestion: 'Make sure the backend API server is running and reachable.'
           }
         }));
         toast.error(`Failed to upload ${file.name}. Ensure backend is running.`, 'Upload Error');
@@ -598,7 +599,7 @@ export default function App() {
     setSelectedResultCol('');
 
     try {
-      const response = await fetch('http://localhost:8000/api/analyze', {
+      const response = await fetch(`${API_BASE_URL}/api/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -646,7 +647,7 @@ export default function App() {
     }));
 
     try {
-      await fetch('http://localhost:8000/api/feedback', {
+      await fetch(`${API_BASE_URL}/api/feedback`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -669,7 +670,7 @@ export default function App() {
       // Fetch full telemetry data from backend
       let backendFilesData: any[] = [];
       try {
-        const res = await fetch('http://localhost:8000/api/workspace/export-session');
+        const res = await fetch(`${API_BASE_URL}/api/workspace/export-session`);
         if (res.ok) {
           const exportJson = await res.json();
           backendFilesData = exportJson.files || [];
@@ -710,7 +711,7 @@ export default function App() {
         ]
       };
 
-      const response = await fetch('http://localhost:8000/api/workspace/export-one-drive', {
+      const response = await fetch(`${API_BASE_URL}/api/workspace/export-one-drive`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -737,7 +738,7 @@ export default function App() {
       // Fetch full telemetry data from backend
       let backendFilesData: any[] = [];
       try {
-        const res = await fetch('http://localhost:8000/api/workspace/export-session');
+        const res = await fetch(`${API_BASE_URL}/api/workspace/export-session`);
         if (res.ok) {
           const exportJson = await res.json();
           backendFilesData = exportJson.files || [];
@@ -802,7 +803,7 @@ export default function App() {
         const state = JSON.parse(event.target?.result as string);
         
         // Push raw metadata and telemetry into backend cache
-        const response = await fetch('http://localhost:8000/api/workspace/import-session', {
+        const response = await fetch(`${API_BASE_URL}/api/workspace/import-session`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(state)

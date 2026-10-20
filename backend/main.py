@@ -547,3 +547,29 @@ async def log_feedback(req: FeedbackRequest):
         return {"status": "success", "message": "Feedback logged successfully."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to log feedback: {str(e)}")
+
+
+# -------------------------------------------------------------
+# Static Frontend Serving for Production / Docker / HF Spaces
+# -------------------------------------------------------------
+frontend_dist = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "dist"))
+if os.path.exists(frontend_dist):
+    from fastapi.staticfiles import StaticFiles
+    from starlette.responses import FileResponse
+
+    assets_dir = os.path.join(frontend_dist, "assets")
+    if os.path.exists(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_frontend(full_path: str):
+        # Do not catch API or documentation endpoints
+        if full_path.startswith("api") or full_path.startswith("docs") or full_path.startswith("openapi.json"):
+            raise HTTPException(status_code=404, detail="Not Found")
+        target_path = os.path.join(frontend_dist, full_path)
+        if full_path and os.path.exists(target_path) and os.path.isfile(target_path):
+            return FileResponse(target_path)
+        index_file = os.path.join(frontend_dist, "index.html")
+        if os.path.exists(index_file):
+            return FileResponse(index_file)
+        raise HTTPException(status_code=404, detail="Frontend index.html not found")

@@ -1,3 +1,13 @@
+---
+title: SensorLens
+emoji: 🔬
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # SensorLens
 
 **SensorLens** is a domain-agnostic full-stack web application designed for appliance engineering teams to ingest sensor test runs in Excel format, explore them through interactive charts, and run pattern-matching similarity diagnostics against baseline profiles.
