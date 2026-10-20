@@ -133,9 +133,9 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
       {/* Center: Context chip + Workflow Stepper */}
       <div className="header-center">
         {/* Context Chip (Active Reference / Test Run) */}
-        {(activeRefName || activeTestName) ? (
+        {fileCount > 0 && (activeRefName || activeTestName) ? (
           <div className="context-chip" title="Active Reference and Test runs currently selected">
-            {activeRefName && (
+            {activeRefName ? (
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                 <span className="context-chip-tag" style={{ background: 'rgba(0, 242, 254, 0.15)', color: 'var(--accent-cyan)' }}>
                   REF
@@ -144,11 +144,16 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
                   {activeRefName}
                 </span>
               </span>
+            ) : (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <span className="context-chip-tag" style={{ background: 'rgba(148, 163, 184, 0.15)', color: 'var(--text-muted)' }}>
+                  REF
+                </span>
+                <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>Unassigned</span>
+              </span>
             )}
-            {activeRefName && activeTestName && (
-              <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>vs</span>
-            )}
-            {activeTestName && (
+            <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>vs</span>
+            {activeTestName ? (
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                 <span className="context-chip-tag" style={{ background: 'rgba(59, 130, 246, 0.18)', color: 'var(--accent-blue)' }}>
                   TEST
@@ -156,6 +161,13 @@ export const AppHeader: React.FC<AppHeaderProps> = ({
                 <span style={{ maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {activeTestName}
                 </span>
+              </span>
+            ) : (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <span className="context-chip-tag" style={{ background: 'rgba(148, 163, 184, 0.15)', color: 'var(--text-muted)' }}>
+                  TEST
+                </span>
+                <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>None</span>
               </span>
             )}
           </div>

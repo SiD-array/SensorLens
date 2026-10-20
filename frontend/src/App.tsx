@@ -214,6 +214,42 @@ export default function App() {
     } catch {}
   }, [librarySort]);
 
+  // Reconcile and auto-clean active selections whenever loaded files change
+  useEffect(() => {
+    if (files.length === 0) {
+      if (activeRefId) setActiveRefId('');
+      if (activeTestIds.length > 0) setActiveTestIds([]);
+      try {
+        localStorage.removeItem('sensorlens_active_ref_id');
+        localStorage.removeItem('sensorlens_active_test_ids');
+        localStorage.removeItem('sensorlens_active_test_id');
+      } catch {}
+      return;
+    }
+
+    // 1. Auto-select Reference run if missing or pointing to deleted file
+    const hasValidRef = files.some(f => f.id === activeRefId);
+    if (!hasValidRef) {
+      const preferredRef = files.find(f => f.tag === 'reference') || files[0];
+      if (preferredRef) {
+        setActiveRefId(preferredRef.id);
+      }
+    }
+
+    // 2. Auto-select Test runs if missing or pointing to deleted files
+    const validTests = activeTestIds.filter(id => files.some(f => f.id === id));
+    if (validTests.length === 0) {
+      const candidates = files.filter(f => f.id !== activeRefId && f.tag !== 'reference');
+      const fallback = files.filter(f => f.id !== activeRefId);
+      const chosen = candidates.length > 0 ? candidates : fallback;
+      if (chosen.length > 0) {
+        setActiveTestIds(chosen.slice(0, 3).map(f => f.id));
+      }
+    } else if (validTests.length !== activeTestIds.length) {
+      setActiveTestIds(validTests);
+    }
+  }, [files, activeRefId]);
+
   const navigateToView = (view: ViewType) => {
     setActiveView(view);
     window.location.hash = view;
@@ -1060,11 +1096,14 @@ export default function App() {
           onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
           activeRefName={files.find(f => f.id === activeRefId)?.name}
           activeTestName={
-            activeTestIds.length === 0
+            files.length === 0
               ? undefined
-              : activeTestIds.length === 1
-                ? files.find(f => f.id === activeTestIds[0])?.name
-                : `${activeTestIds.length} Test Runs`
+              : (() => {
+                  const valid = activeTestIds.filter(id => files.some(f => f.id === id));
+                  if (valid.length === 0) return undefined;
+                  if (valid.length === 1) return files.find(f => f.id === valid[0])?.name;
+                  return `${valid.length} Test Runs`;
+                })()
           }
           fileCount={files.length}
           hasAlignment={Object.keys(mappings).length > 0}
